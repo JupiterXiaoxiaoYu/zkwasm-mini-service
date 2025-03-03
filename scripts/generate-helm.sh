@@ -58,7 +58,7 @@ cat > ${CHART_PATH}/values.yaml << EOL
 
 image:
   repository: ghcr.io/${REPO_OWNER}/${CHART_NAME}
-  pullPolicy: IfNotPresent
+  pullPolicy: Always
   tag: "latest"  # 可以是 latest 或特定版本
 
 # 环境变量配置
