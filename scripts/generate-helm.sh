@@ -139,35 +139,32 @@ cat > ${CHART_PATH}/templates/_find-service.tpl << EOL
 {{- if .Values.externalServices.zkwasmRpc.autoDiscover -}}
   {{- /* 查找同一命名空间中的所有服务 */ -}}
   {{- range \$service := (lookup "v1" "Service" \$namespace "").items -}}
-    {{- /* 检查服务是否有 Ingress 配置 */ -}}
-    {{- \$hasIngress := false -}}
-    {{- range \$ingress := (lookup "networking.k8s.io/v1" "Ingress" \$namespace "").items -}}
-      {{- range \$rule := \$ingress.spec.rules -}}
-        {{- if \$rule.http -}}
-          {{- range \$path := \$rule.http.paths -}}
-            {{- if and \$path.backend \$path.backend.service -}}
-              {{- if eq \$path.backend.service.name \$service.metadata.name -}}
-                {{- \$hasIngress := true -}}
-              {{- end -}}
-            {{- end -}}
-          {{- end -}}
-        {{- end -}}
-      {{- end -}}
+    {{- /* 检查服务名称是否包含 rpc 关键字 */ -}}
+    {{- if contains "rpc" \$service.metadata.name -}}
+      {{- \$serviceName = \$service.metadata.name -}}
+      {{- break -}}
     {{- end -}}
     
     {{- /* 检查服务是否有 RPC 端口 */ -}}
-    {{- \$hasRpcPort := false -}}
+    {{- \$portFound := false -}}
     {{- range \$port := \$service.spec.ports -}}
-      {{- if eq (int \$port.port) (int \$rpcPort) -}}
-        {{- \$hasRpcPort := true -}}
+      {{- if eq (toString \$port.port) (toString \$rpcPort) -}}
+        {{- \$portFound = true -}}
       {{- end -}}
     {{- end -}}
     
-    {{- /* 如果服务有 Ingress 配置或 RPC 端口，则认为它是 RPC 服务 */ -}}
-    {{- if or \$hasIngress \$hasRpcPort -}}
+    {{- /* 如果服务有 RPC 端口，则认为它是 RPC 服务 */ -}}
+    {{- if \$portFound -}}
       {{- \$serviceName = \$service.metadata.name -}}
-      {{- /* 找到第一个匹配的服务后就退出循环 */ -}}
       {{- break -}}
+    {{- end -}}
+    
+    {{- /* 检查服务标签是否包含 rpc 或 api 关键字 */ -}}
+    {{- range \$key, \$value := \$service.metadata.labels -}}
+      {{- if or (contains "rpc" \$key) (contains "rpc" \$value) (contains "api" \$key) (contains "api" \$value) -}}
+        {{- \$serviceName = \$service.metadata.name -}}
+        {{- break -}}
+      {{- end -}}
     {{- end -}}
   {{- end -}}
 {{- end -}}
@@ -188,15 +185,15 @@ cat > ${CHART_PATH}/templates/_find-service.tpl << EOL
     {{- end -}}
     
     {{- /* 检查服务是否有 MongoDB 端口 */ -}}
-    {{- \$hasMongoPort := false -}}
+    {{- \$portFound := false -}}
     {{- range \$port := \$service.spec.ports -}}
-      {{- if eq (int \$port.port) (int \$mongoPort) -}}
-        {{- \$hasMongoPort := true -}}
+      {{- if eq (toString \$port.port) (toString \$mongoPort) -}}
+        {{- \$portFound = true -}}
       {{- end -}}
     {{- end -}}
     
     {{- /* 如果服务有 MongoDB 端口，则认为它是 MongoDB 服务 */ -}}
-    {{- if \$hasMongoPort -}}
+    {{- if \$portFound -}}
       {{- \$serviceName = \$service.metadata.name -}}
       {{- break -}}
     {{- end -}}

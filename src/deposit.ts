@@ -161,7 +161,6 @@ export class Deposit {
             console.log("deposit params, pid_1:", pid_1, "pid_2:", pid_2, "tokenIndex:", tokenindex, "amount:", amountInEther);
             console.log(`------------------Deposit successful! ${event.transactionHash}\n`);
           }
-
           await this.updateTxState(event.transactionHash, 'completed');
         } catch (error) {
           console.error('Error during deposit:', error);
