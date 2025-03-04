@@ -330,7 +330,7 @@ export class Settlement {
       } catch (error) {
         console.error("Error during trySettle:", error);
       }
-      await new Promise(resolve => setTimeout(resolve, 60000));
+      await new Promise(resolve => setTimeout(resolve, 20000));
     }
   }
 }
