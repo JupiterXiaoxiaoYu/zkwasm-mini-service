@@ -136,7 +136,7 @@ export class Deposit {
           address,
           pid_1,
           pid_2,
-          amount,
+          amount: amount / 10 ** 16,
         });
         await tx.save();
         console.log(`Transaction hash and details saved: ${event.transactionHash}`);
