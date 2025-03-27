@@ -56,13 +56,13 @@ export class Settlement {
       try {
         return await operation();
       } catch (error: any) {
-        if (i === retries - 1) throw error; // 如果是最后一次重试，则抛出错误
+        if (i === retries - 1) throw error; // If this is the last retry attempt, throw the error
         
         console.log(`Operation failed, attempt ${i + 1}/${retries}. Retrying in ${delay/1000}s...`);
         console.log(`Error: ${error.message}`);
         
         await new Promise(resolve => setTimeout(resolve, delay));
-        // 每次重试增加延迟时间
+        // Increase delay time for each retry
         delay *= 1.5;
       }
     }
@@ -279,16 +279,16 @@ export class Settlement {
           console.log('here are the attributes',attributes)
           console.log('============')
 
-          // 使用重试机制和超时来执行verify
+          // Use retry mechanism and timeout for verify execution
           const tx = await this.withRetry(
             async () => await this.executeVerifyWithTimeout(proxy, attributes, 90000),
-            3,  // 最多重试3次
-            5000 // 初始延迟5秒
+            3,  // Maximum of 3 retry attempts
+            5000 // Initial delay of 5 seconds
           );
           
           console.log("transaction initiated:", tx.hash);
           
-          // 为等待交易收据添加超时
+          // Add timeout for waiting for transaction receipt
           const receipt = await this.withRetry(
             async () => {
               const receiptPromise = tx.wait();
@@ -305,9 +305,13 @@ export class Settlement {
           
           console.log("receipt:", receipt);
 
+          if (!receipt) {
+            throw new Error('Transaction receipt is null, cannot process withdraw events');
+          }
+
           const r = decodeWithdraw(attributes.txData);
+          
           const s = await this.getWithdrawEventParameters(proxy, receipt);
-          const withdrawArray = [];
           let status = 'Done';
           if (r.length !== s.length) {
             status = 'Fail';

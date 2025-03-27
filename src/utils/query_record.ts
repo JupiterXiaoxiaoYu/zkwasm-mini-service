@@ -1,8 +1,8 @@
 import mongoose from 'mongoose';
 import { modelBundle } from "./config.js";
 
-const mongoUri = "mongodb://localhost"; // 替换成你的 MongoDB URI
-const taskId = "67a1e3f0e2dc2c324760d1de"; // 替换成你要查询的 taskId
+const mongoUri = "mongodb://localhost"; // Replace with your MongoDB URI
+const taskId = "67a1e3f0e2dc2c324760d1de"; // Replace with the taskId you want to query
 
 async function queryRecord(taskId: string) {
   try {
@@ -45,7 +45,7 @@ async function queryLatestRecords() {
 
     // Query latest 10 records
     const records = await modelBundle.find({})
-      .sort({ _id: -1 }) // 按 _id 降序排序，最新的在前
+      .sort({ _id: -1 }) // Sort by _id in descending order, newest first
       .limit(10);
     
     console.log('\nLatest 10 records:');
@@ -70,12 +70,12 @@ async function queryLatestRecords() {
   }
 }
 
-// 运行查询
+// Run queries
 async function main() {
-  // 先查询指定的 taskId
+  // First query the specified taskId
   await queryRecord(taskId);
   
-  // 然后查询最新的10条记录
+  // Then query the latest 10 records
   await queryLatestRecords();
 }
 
