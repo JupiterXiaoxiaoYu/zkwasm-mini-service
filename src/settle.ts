@@ -232,6 +232,25 @@ export class Settlement {
     }
   }
 
+  private async executeVerifyWithTimeout(
+    proxy: ethers.Contract, 
+    attributes: ProofArgs, 
+    timeoutMs: number = 60000
+  ): Promise<ethers.ContractTransactionResponse> {
+    return Promise.race([
+      proxy.verify(
+        attributes.txData,
+        attributes.proofArr,
+        attributes.verifyInstanceArr,
+        attributes.auxArr,
+        [attributes.instArr],
+      ),
+      new Promise<never>((_, reject) => {
+        setTimeout(() => reject(new Error('Verify transaction timeout exceeded')), timeoutMs);
+      })
+    ]);
+  }
+
   private async trySettle() {
     return this.withRetry(async () => {
       let merkleRoot = await this.getMerkle();
@@ -254,27 +273,36 @@ export class Settlement {
             }
           }
 
-          // console.log('============')
-          // console.log('here are the task',task)
-          // console.log('============')
-
           let attributes = await this.prepareVerifyAttributes(task!);
-
 
           console.log('============')
           console.log('here are the attributes',attributes)
           console.log('============')
 
-
-          const tx = await proxy.verify(
-            attributes.txData,
-            attributes.proofArr,
-            attributes.verifyInstanceArr,
-            attributes.auxArr,
-            [attributes.instArr],
+          // 使用重试机制和超时来执行verify
+          const tx = await this.withRetry(
+            async () => await this.executeVerifyWithTimeout(proxy, attributes, 90000),
+            3,  // 最多重试3次
+            5000 // 初始延迟5秒
           );
-          const receipt = await tx.wait();
-          console.log("transaction:", tx.hash);
+          
+          console.log("transaction initiated:", tx.hash);
+          
+          // 为等待交易收据添加超时
+          const receipt = await this.withRetry(
+            async () => {
+              const receiptPromise = tx.wait();
+              return Promise.race([
+                receiptPromise,
+                new Promise<never>((_, reject) => 
+                  setTimeout(() => reject(new Error('Transaction receipt timeout')), 120000)
+                )
+              ]);
+            },
+            3,
+            10000
+          );
+          
           console.log("receipt:", receipt);
 
           const r = decodeWithdraw(attributes.txData);
