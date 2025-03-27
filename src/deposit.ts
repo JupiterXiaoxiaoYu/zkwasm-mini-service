@@ -46,7 +46,7 @@ export class Deposit {
     
     this.provider = new ethers.JsonRpcProvider(config.rpcProvider);
     
-    // 将字符串转换为 BigInt
+    // Convert string to BigInt
     const WITHDRAW = BigInt(config.withdrawOpcode);
     const DEPOSIT = BigInt(config.depositOpcode);
     
@@ -165,7 +165,7 @@ export class Deposit {
         } catch (error) {
           console.error('Error during deposit:', error);
           await this.updateTxState(event.transactionHash, 'failed');
-          throw error; // 重新抛出错误以确保错误被正确处理
+          throw error; // Re-throw the error to ensure it's properly handled
         }
       } else if (tx.state === 'in-progress'){
         while(1) {
@@ -182,7 +182,7 @@ export class Deposit {
       }
     } catch (error) {
       console.error('Error processing TopUp event:', error);
-      throw error; // 重新抛出错误以确保错误被正确处理
+      throw error; // Re-throw the error to ensure it's properly handled
     }
   }
 
@@ -197,7 +197,7 @@ export class Deposit {
       console.log(`Starting historical scan - Latest block: ${latestBlock}`);
       console.log(`Scanning from block ${startBlock} to ${latestBlock}`);
       
-      // 获取事件签名
+      // Get event signature
       const topUpEvent = abiData.abi.find(
         (item: any) => item.type === 'event' && item.name === 'TopUp'
       );
@@ -208,7 +208,7 @@ export class Deposit {
       const eventHash = ethers.id(eventSignature);
       console.log('Using event hash:', eventHash);
 
-      // 分批处理区块
+      // Process blocks in batches
       for (let fromBlock = startBlock; fromBlock < latestBlock; fromBlock += batchSize) {
         const toBlock = Math.min(fromBlock + batchSize - 1, latestBlock);
         console.log(`Querying events from block ${fromBlock} to ${toBlock}`);
@@ -232,7 +232,7 @@ export class Deposit {
           }
         } catch (error) {
           console.error(`Error processing batch ${fromBlock}-${toBlock}:`, error);
-          continue; // 继续处理下一批次
+          continue; // Continue processing the next batch
         }
       }
       
