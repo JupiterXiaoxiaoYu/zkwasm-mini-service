@@ -10,16 +10,67 @@ const txSchema = new mongoose.Schema({
   timestamp: { type: Date, default: Date.now },
   l1token: { type: String, required: true },
   address: { type: String, required: true },
-  pid_1: { type: BigInt, required: true },
-  pid_2: { type: BigInt, required: true },
-  amount: { type: BigInt, required: true },
+  
+  pid_1: { 
+    type: mongoose.Schema.Types.Mixed,
+    required: true,
+    get: function(v: any) {
+      if (v === null || v === undefined) return undefined;
+      try {
+        return BigInt(v.toString ? v.toString() : v);
+      } catch (error) {
+        console.warn(`无法将值 ${v} 转换为BigInt`);
+        return undefined;
+      }
+    },
+    set: function(v: any) {
+      if (v === null || v === undefined) return v;
+      return v.toString();
+    }
+  },
+  
+  pid_2: { 
+    type: mongoose.Schema.Types.Mixed,
+    required: true,
+    get: function(v: any) {
+      if (v === null || v === undefined) return undefined;
+      try {
+        return BigInt(v.toString ? v.toString() : v);
+      } catch (error) {
+        console.warn(`Cannot convert ${v} to BigInt`);
+        return undefined;
+      }
+    },
+    set: function(v: any) {
+      if (v === null || v === undefined) return v;
+      return v.toString();
+    }
+  },
+  
+  amount: { 
+    type: mongoose.Schema.Types.Mixed,
+    required: true,
+    get: function(v: any) {
+      if (v === null || v === undefined) return undefined;
+      try {
+        return BigInt(v.toString ? v.toString() : v);
+      } catch (error) {
+        console.warn(`Cannot convert ${v} to BigInt`);
+        return undefined;
+      }
+    },
+    set: function(v: any) {
+      if (v === null || v === undefined) return v;
+      return v.toString();
+    }
+  }
 });
 
-const TxHash = mongoose.model('TxHash', txSchema);
+// 确保getter在查询结果中生效
+txSchema.set('toJSON', { getters: true });
+txSchema.set('toObject', { getters: true });
 
-function safeUint64BigInt(value: bigint): bigint {
-  return BigInt.asUintN(64, value);
-}
+const TxHash = mongoose.model('TxHash', txSchema);
 
 export class Deposit {
   private rpc: ZKWasmAppRpc;
@@ -138,9 +189,9 @@ export class Deposit {
           state: 'pending',
           l1token,
           address,
-          pid_1: safeUint64BigInt(pid_1),
-          pid_2: safeUint64BigInt(pid_2),
-          amount: safeUint64BigInt(amount / BigInt(10 ** 18)),
+          pid_1,
+          pid_2,
+          amount: amount / BigInt(10 ** 18),
         });
         await tx.save();
         console.log(`Transaction hash and details saved: ${event.transactionHash}`);
