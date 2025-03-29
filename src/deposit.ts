@@ -66,7 +66,6 @@ const txSchema = new mongoose.Schema({
   }
 });
 
-// 确保getter在查询结果中生效
 txSchema.set('toJSON', { getters: true });
 txSchema.set('toObject', { getters: true });
 
