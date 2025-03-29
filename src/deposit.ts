@@ -19,7 +19,7 @@ const txSchema = new mongoose.Schema({
       try {
         return BigInt(v.toString ? v.toString() : v);
       } catch (error) {
-        console.warn(`无法将值 ${v} 转换为BigInt`);
+        console.warn(`Cannot convert ${v} to BigInt`);
         return undefined;
       }
     },
@@ -109,8 +109,6 @@ export class Deposit {
     this.proxyContract = new ethers.Contract(config.settlementContractAddress, abiData.abi, this.provider);
 
     console.log('HTTP provider initialized');
-
-    console.log("player processing key:", this.admin.processingKey);
   }
 
   private createCommand(nonce: bigint, command: bigint, params: Array<bigint>): BigUint64Array {
@@ -319,7 +317,6 @@ export class Deposit {
     console.log("Setting up polling for new events...");
     let lastProcessedBlock = await this.provider.getBlockNumber();
     
-    // 每10秒轮询一次新区块
     setInterval(async () => {
       let retries = 3;
       while (retries > 0) {
@@ -350,18 +347,18 @@ export class Deposit {
 
             lastProcessedBlock = currentBlock;
           }
-          break; // 成功后跳出重试循环
+          break; 
         } catch (error) {
           retries--;
           if (retries === 0) {
             console.error('Error polling for new events after all retries:', error);
           } else {
             console.log(`Retry attempt remaining: ${retries}`);
-            await new Promise(resolve => setTimeout(resolve, 2000)); // 等待2秒后重试
+            await new Promise(resolve => setTimeout(resolve, 2000)); 
           }
         }
       }
-    }, 30000); // 30秒轮询一次
+    }, 30000); 
 
 
     console.log('Event polling setup successfully');
