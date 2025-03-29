@@ -17,6 +17,10 @@ const txSchema = new mongoose.Schema({
 
 const TxHash = mongoose.model('TxHash', txSchema);
 
+function safeUint64BigInt(value: bigint): bigint {
+  return BigInt.asUintN(64, value);
+}
+
 export class Deposit {
   private rpc: ZKWasmAppRpc;
   private admin: PlayerConvention;
@@ -134,9 +138,9 @@ export class Deposit {
           state: 'pending',
           l1token,
           address,
-          pid_1,
-          pid_2,
-          amount: amount / BigInt(10 ** 18),
+          pid_1: safeUint64BigInt(pid_1),
+          pid_2: safeUint64BigInt(pid_2),
+          amount: safeUint64BigInt(amount / BigInt(10 ** 18)),
         });
         await tx.save();
         console.log(`Transaction hash and details saved: ${event.transactionHash}`);
