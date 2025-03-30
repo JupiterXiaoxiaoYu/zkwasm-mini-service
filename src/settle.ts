@@ -69,19 +69,6 @@ export class Settlement {
     throw new Error('Unreachable code');
   }
 
-  private async getMerkleArray(): Promise<BigUint64Array> {
-    return this.withRetry(async () => {
-      const proxy = new ethers.Contract(this.constants.proxyAddress, abiData.abi, this.provider);
-      let proxyInfo = await proxy.getProxyInfo();
-      console.log("Proxy Info:", proxyInfo);
-      const oldRoot = proxyInfo.merkle_root;
-      console.log("Type of oldRoot:", typeof oldRoot);
-      console.log("Old Merkle Root:", oldRoot);
-      console.log("Settle:Old Merkle Root in u64:", this.convertToBigUint64Array(oldRoot));
-      return this.convertToBigUint64Array(oldRoot);
-    });
-  }
-
   private async getMerkle(): Promise<String> {
     return this.withRetry(async () => {
       const proxy = new ethers.Contract(this.constants.proxyAddress, abiData.abi, this.provider);

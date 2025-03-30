@@ -10,58 +10,27 @@ const txSchema = new mongoose.Schema({
   timestamp: { type: Date, default: Date.now },
   l1token: { type: String, required: true },
   address: { type: String, required: true },
-  
   pid_1: { 
-    type: mongoose.Schema.Types.Mixed,
+    type: BigInt, 
     required: true,
-    get: function(v: any) {
-      if (v === null || v === undefined) return undefined;
-      try {
-        return BigInt(v.toString ? v.toString() : v);
-      } catch (error) {
-        console.warn(`Cannot convert ${v} to BigInt`);
-        return undefined;
-      }
-    },
-    set: function(v: any) {
-      if (v === null || v === undefined) return v;
-      return v.toString();
+    get: function(value: any) {
+      return BigInt.asUintN(64, value);
     }
   },
   
   pid_2: { 
-    type: mongoose.Schema.Types.Mixed,
+    type: BigInt, 
     required: true,
-    get: function(v: any) {
-      if (v === null || v === undefined) return undefined;
-      try {
-        return BigInt(v.toString ? v.toString() : v);
-      } catch (error) {
-        console.warn(`Cannot convert ${v} to BigInt`);
-        return undefined;
-      }
-    },
-    set: function(v: any) {
-      if (v === null || v === undefined) return v;
-      return v.toString();
+    get: function(value: any) {
+      return BigInt.asUintN(64, value);
     }
   },
   
   amount: { 
-    type: mongoose.Schema.Types.Mixed,
+    type: BigInt, 
     required: true,
-    get: function(v: any) {
-      if (v === null || v === undefined) return undefined;
-      try {
-        return BigInt(v.toString ? v.toString() : v);
-      } catch (error) {
-        console.warn(`Cannot convert ${v} to BigInt`);
-        return undefined;
-      }
-    },
-    set: function(v: any) {
-      if (v === null || v === undefined) return v;
-      return v.toString();
+    get: function(value: any) {
+      return BigInt.asUintN(64, value);
     }
   }
 });
