@@ -165,7 +165,7 @@ export class Deposit {
         console.log(`TxHash ${event.transactionHash} already exists in the DB with state: ${tx.state}`);
       }
 
-      if (tx && (tx.state === 'pending' || tx.state === 'failed')) {
+      if (tx && (tx.state === 'pending')) {
         try {
           await this.updateTxState(event.transactionHash, 'in-progress');
           console.log('Transaction state updated to "in-progress".');
@@ -189,10 +189,7 @@ export class Deposit {
           throw error; // Re-throw the error to ensure it's properly handled
         }
       } else if (tx.state === 'in-progress'){
-        while(1) {
-          console.log("in-progress, something wrong happen, should manuel check retry or skip tx");
-          await new Promise(resolve => setTimeout(resolve, 1000));
-        }
+        console.error("in-progress, something wrong happen, should manuel check retry or skip tx");
       } else {
         if (tx.state != 'completed') {
           while(1) {
@@ -247,7 +244,7 @@ export class Deposit {
           for (const log of logs) {
             console.log(`Processing historical event from tx: ${log.transactionHash}`);
             const tx = await this.findTxByHash(log.transactionHash);
-            if (!tx || ['pending', 'failed'].includes(tx.state)) {
+            if (!tx || ['pending'].includes(tx.state)) {
               await this.processTopUpEvent(log as EventLog);
             }
           }
