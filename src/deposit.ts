@@ -191,7 +191,7 @@ export class Deposit {
       } else if (tx.state === 'in-progress'){
         console.error("in-progress, something wrong happen, should manuel check retry or skip tx");
       } else {
-        if (tx.state != 'completed') {
+        if (tx.state != 'completed' && tx.state != 'failed') {
           while(1) {
             console.log("shouldn't arrive here");
             await new Promise(resolve => setTimeout(resolve, 1000));
