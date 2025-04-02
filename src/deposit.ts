@@ -198,7 +198,7 @@ export class Deposit {
 
       const [l1token, address, pid_1, pid_2, amount] = decodedEvent.args;
 
-      console.log(`TopUp event received: pid_1=${pid_1.toString()}, pid_2=${pid_2.toString()}, amount=${amount.toString()} wei`);
+      console.log(`TopUp event received: pid_1=${pid_1.toString()}, pid_2=${pid_2.toString()}, amount=${amount/BigInt(10 ** 18)}, hash=${event.transactionHash}`);
 
       const tokens = await this.proxyContract.allTokens();
       const getTokenIndex = function(l1token: string, tokens: any) {
@@ -238,6 +238,7 @@ export class Deposit {
           });
           await tx.save();
           console.log(`Transaction with insufficient amount marked as completed: ${event.transactionHash}`);
+          console.log("======================\n");
           return;
         }
         
@@ -254,9 +255,16 @@ export class Deposit {
         
         // Add processing logic for the new pending transaction
         try {
-          tx.state = 'in-progress';
           const nonce = await this.admin.getNonce();
           tx.nonce = nonce;
+          await tx.save();
+        } catch (error) {
+          console.error('Error during get nonce:', error);
+          throw error;
+        }
+        
+        try {
+          tx.state = 'in-progress';
           await tx.save();
           await this.performDeposit(event.transactionHash, tx.nonce, pid_1, pid_2, tokenindex, amountInEther);
         } catch (error) {
@@ -264,35 +272,51 @@ export class Deposit {
           await this.updateTxState(event.transactionHash, 'failed');
           throw error;
         }
+
       } else { // tx is tracked
         if (tx.state === 'completed') {
           console.log(`Transaction ${event.transactionHash} already completed.`);
+          console.log("======================\n");
           return;
         } else if (tx.state === 'pending') {
           try {
-            tx.state = 'in-progress';
-            const nonce = await this.admin.getNonce();
-            tx.nonce = nonce;
-            await tx.save();
+            try {
+              const nonce = await this.admin.getNonce();
+              tx.nonce = nonce;
+              await tx.save();
+            } catch (error) {
+              console.error('Error during get nonce:', error);
+              throw error;
+            }
 
             if (amountInEther < 1n) {
               console.log("tx with insufficient amount, change state to completed");
               await this.updateTxState(event.transactionHash, 'completed');
+              console.log("======================\n");
               return;
             }
-            await this.performDeposit(event.transactionHash, tx.nonce, pid_1, pid_2, tokenindex, amountInEther);
+
+            try {
+              tx.state = 'in-progress';
+              await tx.save();
+              await this.performDeposit(event.transactionHash, tx.nonce, pid_1, pid_2, tokenindex, amountInEther);
+            } catch (error) {
+              console.error('Error during deposit processing:', error);
+              await this.updateTxState(event.transactionHash, 'failed');
+              throw error;
+            }
+
           } catch (error) {
-            console.error('Error during deposit processing:', error);
-            await this.updateTxState(event.transactionHash, 'failed'); 
             throw error;
           }
         } else if (tx.state === 'in-progress' || tx.state === 'failed') {
           try {
-            if (tx.nonce) {
+            if (tx.nonce != null) {
               const checkResult: any = await this.admin.checkDeposit(tx.nonce, pid_1, pid_2, tokenindex, amountInEther);
               if (checkResult.data != null) {
                 console.log("checkDeposit success, change state to completed, pid_1:", pid_1, "pid_2:", pid_2, "amount:", amountInEther, "data:", JSON.stringify(checkResult.data));
                 await this.updateTxState(event.transactionHash, 'completed');
+                console.log("======================\n");
                 return;
               } else {
                 console.log("checkDeposit failed, perform retry");
@@ -302,6 +326,7 @@ export class Deposit {
                 const newNonce = await this.admin.getNonce();
                 tx.nonce = newNonce;
                 await tx.save();
+                console.log("retryDeposit, tx:", JSON.stringify(tx.toObject(), null, 2));
                 await this.performDeposit(event.transactionHash, tx.nonce, pid_1, pid_2, tokenindex, amountInEther);
               }
             } else {
@@ -321,7 +346,7 @@ export class Deposit {
     } catch (error) {
       throw error;
     }
-    console.log('======================');
+    console.log('======================\n');
   }
 
   private async getHistoricalTopUpEvents() {
@@ -363,7 +388,7 @@ export class Deposit {
           
           for (const log of logs) {
             try {
-              console.log(`Processing historical event from tx: ${log.transactionHash}`);
+              console.log(`**Processing historical event from tx: ${log.transactionHash}**`);
               const tx = await this.findTxByHash(log.transactionHash);
               if (!tx || ['pending', 'in-progress', 'failed'].includes(tx.state)) {
                 await this.processTopUpEvent(log as EventLog);
@@ -373,6 +398,7 @@ export class Deposit {
             } catch (error) {
               console.error(`Error processing individual event ${log.transactionHash}:`, error);
               // Continue with next event even if current one fails
+              console.log('======================\n');
               continue;
             }
           }
@@ -412,9 +438,11 @@ export class Deposit {
     const poll = async () => {
         if (isProcessing) {
             console.log("[Poll] Previous polling still in progress, skipping this round");
+            console.log("======================\n");
             return;
         }
 
+        console.log("======================");
         console.log("[Poll] Starting new polling round...");
         isProcessing = true;
         try {
@@ -468,6 +496,7 @@ export class Deposit {
             }
         } finally {
             console.log("[Poll] Polling round completed");
+            console.log("======================\n");
             isProcessing = false;
         }
     };
