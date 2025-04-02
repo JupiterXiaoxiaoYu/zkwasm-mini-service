@@ -6,13 +6,13 @@
     "@types/node": "^20.14.2",
     "@types/sha256": "^0.2.2",
     "cors": "^2.8.5",
-    "zkwasm-minirollup-rpc": "github:DelphinusLab/zkWasm-minirollup-rpc",
     "delphinus-curves": "git+https://github.com/DelphinusLab/delphinus-curves.git",
     "dotenv": "^16.4.5",
     "ethers": "^6.13.1",
     "mongoose": "^8.4.4",
     "ts-node": "^10.9.2",
     "typescript": "^5.4.5",
+    "zkwasm-minirollup-rpc": "github:DelphinusLab/zkWasm-minirollup-rpc",
     "zkwasm-service-cli": "git+https://github.com/DelphinusLab/zkWasm-service-cli.git",
     "zkwasm-service-helper": "github:DelphinusLab/zkWasm-service-helper"
   },
@@ -24,5 +24,3 @@
     "settle": "node dist/settle_service.js"
   }
 }
-
-
