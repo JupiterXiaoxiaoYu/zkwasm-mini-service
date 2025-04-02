@@ -208,6 +208,19 @@ export class Deposit {
           amount: amountInEther,
         });
         await tx.save();
+        
+        // Add processing logic for the new pending transaction
+        try {
+          tx.state = 'in-progress';
+          const nonce = await this.admin.getNonce();
+          tx.nonce = nonce;
+          await tx.save();
+          await this.performDeposit(event.transactionHash, tx.nonce, pid_1, pid_2, tokenindex, amountInEther);
+        } catch (error) {
+          console.error('Error during deposit processing:', error);
+          await this.updateTxState(event.transactionHash, 'failed');
+          throw error;
+        }
       } else { // tx is tracked
         if (tx.state === 'completed') {
           console.log(`Transaction ${event.transactionHash} already completed.`);
@@ -220,6 +233,7 @@ export class Deposit {
             await tx.save();
 
             if (amountInEther < 1n) {
+              console.log("tx with insufficient amount, change state to completed");
               await this.updateTxState(event.transactionHash, 'completed');
               return;
             }
