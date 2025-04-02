@@ -147,14 +147,16 @@ export class Deposit {
       process.exit(1); 
     }
 
+    console.log("performDeposit, txHash:", txHash, "nonce:", nonce, "pid_1:", pid_1, "pid_2:", pid_2, "tokenIndex:", tokenIndex, "amountInEther:", amountInEther);
+
     try {
       this.isProcessingDeposit = true;
 
       // Check if transaction is already completed
       const currentTx = await TxHash.findOne({ txHash });
       if (currentTx?.state === 'completed') {
-        console.log(`Transaction ${txHash} already completed, skipping deposit`);
-        return true;
+        console.error("tx already completed, this shall not happen");
+        process.exit(1);
       }
 
       // Perform the actual deposit
@@ -218,7 +220,6 @@ export class Deposit {
       }
 
       let amountInEther = amount / BigInt(10 ** 18);
-      console.log("Deposited amount (in ether): ", amountInEther);
 
       let tx = await TxHash.findOne({ txHash: event.transactionHash });
       
@@ -303,6 +304,9 @@ export class Deposit {
                 await tx.save();
                 await this.performDeposit(event.transactionHash, tx.nonce, pid_1, pid_2, tokenindex, amountInEther);
               }
+            } else {
+              console.error("tx nonce is not set shall not happen");
+              process.exit(1);
             }
           } catch (error) {
             console.error('Error handling in-progress/failed transaction:', error);
@@ -398,13 +402,12 @@ export class Deposit {
     console.log("Installing admin...");
     await this.createPlayer(this.admin);
 
-    // 处理历史事件
     console.log("Processing historical TopUp events...");
     await this.getHistoricalTopUpEvents();
 
     console.log("Setting up polling for new events...");
     let lastProcessedBlock = await this.provider.getBlockNumber();
-    let isProcessing = false; // 添加处理标志
+    let isProcessing = false; 
     
     const poll = async () => {
         if (isProcessing) {
