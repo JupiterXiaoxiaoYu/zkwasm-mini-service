@@ -3,13 +3,14 @@ import { ethers, EventLog } from "ethers";
 import abiData from './utils/Proxy.json' assert { type: 'json' };
 import mongoose from 'mongoose';
 
-// Mongoose Schema and Model for saving tx hashes and state
+// Mongoose Schema for tracking deposit transactions
 const txSchema = new mongoose.Schema({
   txHash: { type: String, required: true, unique: true },
+  // Transaction state: pending -> in-progress -> completed/failed
   state: { type: String, enum: ['pending', 'in-progress', 'completed', 'failed'], default: 'pending' },
   timestamp: { type: Date, default: Date.now },
-  l1token: { type: String, required: true },
-  address: { type: String, required: true },
+  l1token: { type: String, required: true }, // L1 token address
+  address: { type: String, required: true },  // User's address
   nonce: { 
     type: BigInt, 
     required: false,
@@ -17,6 +18,7 @@ const txSchema = new mongoose.Schema({
       return value ? BigInt.asUintN(64, value) : null; 
     }
   },
+  // Player IDs for the deposit
   pid_1: { 
     type: BigInt, 
     required: true,
@@ -38,8 +40,8 @@ const txSchema = new mongoose.Schema({
       return BigInt.asUintN(64, value);
     }
   },
-  retryCount: { type: Number, default: 0 },
-  lastRetryTime: { type: Date }
+  retryCount: { type: Number, default: 0 },     // Number of retry attempts
+  lastRetryTime: { type: Date }                 // Timestamp of last retry
 });
 
 txSchema.set('toJSON', { getters: true });
@@ -61,6 +63,7 @@ export class Deposit {
     withdrawOpcode: string;
     depositOpcode: string;
   };
+  private processingTxs: Map<string, boolean> = new Map(); 
 
   constructor(config: {
     rpcProvider: string;
@@ -116,28 +119,70 @@ export class Deposit {
 
   private async updateTxState(txHash: string, state: string) {
     try {
-      await TxHash.updateOne({ txHash }, { state });
+      await TxHash.updateOne(
+        { 
+          txHash,
+          state: { $ne: 'completed' }
+        }, 
+        { state }
+      );
       console.log(`Transaction state updated to: ${state} for txHash: ${txHash}`);
     } catch (error) {
       console.error(`Failed to update tx state for txHash ${txHash}: ${(error as Error).message}`);
     }
   }
 
+  /**
+   * Performs a deposit transaction with concurrency control
+   * @param txHash Transaction hash
+   * @param nonce Transaction nonce
+   * @param pid_1 First player ID
+   * @param pid_2 Second player ID
+   * @param tokenIndex Token index in the contract
+   * @param amountInEther Amount to deposit in ether
+   */
   private async performDeposit(txHash: string, nonce: bigint, pid_1: bigint, pid_2: bigint, tokenIndex: bigint, amountInEther: bigint) {
+    // Check if transaction is already being processed
+    if (this.processingTxs.get(txHash)) {
+      console.log(`Transaction ${txHash} is already being processed, skipping`);
+      return;
+    }
+
     try {
+      // Set processing flag to prevent concurrent processing
+      this.processingTxs.set(txHash, true);
+
+      // Check if transaction is already completed
+      const currentTx = await TxHash.findOne({ txHash });
+      if (currentTx?.state === 'completed') {
+        console.log(`Transaction ${txHash} already completed, skipping deposit`);
+        return true;
+      }
+
+      // Perform the actual deposit
       const depositResult = await this.admin.deposit(nonce, pid_1, pid_2, tokenIndex, amountInEther);
       if (!depositResult) {
         await this.updateTxState(txHash, 'failed');
         throw new Error(`Deposit failed for transaction ${txHash}`);
       }
+      
+      // Update state to completed
       await this.updateTxState(txHash, 'completed');
+      return true;
     } catch (error) {
+      // Error handling with completion check
       console.error('Error during deposit:', error);
+      const latestTx = await TxHash.findOne({ txHash });
+      if (latestTx?.state === 'completed') {
+        return true;
+      }
       await this.updateTxState(txHash, 'failed');
       throw error;
+    } finally {
+      // Always clean up processing flag
+      this.processingTxs.delete(txHash);
     }
   }
-
 
   private async processTopUpEvent(event: EventLog) {
     console.log('======================');
@@ -240,7 +285,6 @@ export class Deposit {
             await this.performDeposit(event.transactionHash, tx.nonce, pid_1, pid_2, tokenindex, amountInEther);
           } catch (error) {
             console.error('Error during deposit processing:', error);
-            await this.updateTxState(event.transactionHash, 'failed');
             throw error;
           }
         } else if (tx.state === 'in-progress' || tx.state === 'failed') {
@@ -248,7 +292,7 @@ export class Deposit {
             if (tx.nonce) {
               const checkResult: any = await this.admin.checkDeposit(tx.nonce, pid_1, pid_2, tokenindex, amountInEther);
               if (checkResult.data != null) {
-                console.log("checkDeposit success, change state to completed, pid_1:", pid_1, "pid_2:", pid_2, "amount:", amountInEther);
+                console.log("checkDeposit success, change state to completed, pid_1:", pid_1, "pid_2:", pid_2, "amount:", amountInEther, "data:", JSON.stringify(checkResult.data));
                 await this.updateTxState(event.transactionHash, 'completed');
                 return;
               } else {
@@ -261,14 +305,6 @@ export class Deposit {
                 await tx.save();
                 await this.performDeposit(event.transactionHash, tx.nonce, pid_1, pid_2, tokenindex, amountInEther);
               }
-            } else {
-              console.log("tx nonce is not set, perform retry");
-              tx.retryCount += 1;
-              tx.lastRetryTime = new Date();
-              const newNonce = await this.admin.getNonce();
-              tx.nonce = newNonce;
-              await tx.save();
-              await this.performDeposit(event.transactionHash, tx.nonce, pid_1, pid_2, tokenindex, amountInEther);
             }
           } catch (error) {
             console.error('Error handling in-progress/failed transaction:', error);
@@ -281,7 +317,6 @@ export class Deposit {
         }
       }
     } catch (error) {
-      console.error('Error in processTopUpEvent:', error);
       throw error;
     }
     console.log('======================');
@@ -325,17 +360,24 @@ export class Deposit {
           console.log(`Found ${logs.length} historical TopUp events in this batch.`);
           
           for (const log of logs) {
-            console.log(`Processing historical event from tx: ${log.transactionHash}`);
-            const tx = await this.findTxByHash(log.transactionHash);
-            if (!tx || ['pending', 'in-progress', 'failed'].includes(tx.state)) {
-              await this.processTopUpEvent(log as EventLog);
-            } else {
-              console.log("tx already processed, skip tx:", log.transactionHash);
+            try {
+              console.log(`Processing historical event from tx: ${log.transactionHash}`);
+              const tx = await this.findTxByHash(log.transactionHash);
+              if (!tx || ['pending', 'in-progress', 'failed'].includes(tx.state)) {
+                await this.processTopUpEvent(log as EventLog);
+              } else {
+                console.log("tx already processed, skip tx:", log.transactionHash);
+              }
+            } catch (error) {
+              console.error(`Error processing individual event ${log.transactionHash}:`, error);
+              // Continue with next event even if current one fails
+              continue;
             }
           }
         } catch (error) {
           console.error(`Error processing batch ${fromBlock}-${toBlock}:`, error);
-          continue; // Continue processing the next batch
+          // Continue with next batch even if current one fails
+          continue;
         }
       }
       
@@ -350,67 +392,93 @@ export class Deposit {
   async serve() {
     const dbName = `${this.config.settlementContractAddress}_deposit`;
     
-    // Connect to MongoDB
     await mongoose.connect(this.config.mongoUri, {
       dbName,
     });
     console.log('Deposit service started - MongoDB connected');
 
-    // Initialize admin
     console.log("Installing admin...");
     await this.createPlayer(this.admin);
 
-    // Process historical events first
+    // 处理历史事件
     console.log("Processing historical TopUp events...");
     await this.getHistoricalTopUpEvents();
 
     console.log("Setting up polling for new events...");
     let lastProcessedBlock = await this.provider.getBlockNumber();
+    let isProcessing = false; // 添加处理标志
     
-    setInterval(async () => {
-      let retries = 3;
-      while (retries > 0) {
-        try {
-          const currentBlock = await this.provider.getBlockNumber();
-          if (currentBlock > lastProcessedBlock) {
-            console.log(`Checking new blocks from ${lastProcessedBlock + 1} to ${currentBlock}`);
-            
-            const topUpEvent = abiData.abi.find(
-              (item: any) => item.type === 'event' && item.name === 'TopUp'
-            );
-            if (!topUpEvent) {
-              throw new Error('TopUp event not found in ABI');
-            }
-            const eventHash = ethers.id(`${topUpEvent.name}(${topUpEvent.inputs.map((input: any) => input.type).join(',')})`);
-            
-            const logs = await this.provider.getLogs({
-              address: this.config.settlementContractAddress,
-              topics: [eventHash],
-              fromBlock: lastProcessedBlock + 1,
-              toBlock: currentBlock
-            });
-
-            for (const log of logs) {
-              console.log('New TopUp event detected:', log);
-              await this.processTopUpEvent(log as EventLog);
-            }
-
-            lastProcessedBlock = currentBlock;
-          }
-          break; 
-        } catch (error) {
-          retries--;
-          if (retries === 0) {
-            console.error('Error polling for new events after all retries:', error);
-          } else {
-            console.log(`Retry attempt remaining: ${retries}`);
-            await new Promise(resolve => setTimeout(resolve, 2000)); 
-          }
+    const poll = async () => {
+        if (isProcessing) {
+            console.log("[Poll] Previous polling still in progress, skipping this round");
+            return;
         }
-      }
-    }, 30000); 
 
+        console.log("[Poll] Starting new polling round...");
+        isProcessing = true;
+        try {
+            let retries = 3;
+            while (retries > 0) {
+                try {
+                    const currentBlock = await this.provider.getBlockNumber();
+                    console.log(`[Poll] Current block: ${currentBlock}, Last processed block: ${lastProcessedBlock}`);
+                    
+                    if (currentBlock > lastProcessedBlock) {
+                        console.log(`[Poll] Processing blocks from ${lastProcessedBlock + 1} to ${currentBlock} (${currentBlock - lastProcessedBlock} blocks)`);
+                        
+                        const topUpEvent = abiData.abi.find(
+                          (item: any) => item.type === 'event' && item.name === 'TopUp'
+                        );
+                        if (!topUpEvent) {
+                          throw new Error('TopUp event not found in ABI');
+                        }
+                        const eventHash = ethers.id(`${topUpEvent.name}(${topUpEvent.inputs.map((input: any) => input.type).join(',')})`);
+                        
+                        const logs = await this.provider.getLogs({
+                          address: this.config.settlementContractAddress,
+                          topics: [eventHash],
+                          fromBlock: lastProcessedBlock + 1,
+                          toBlock: currentBlock
+                        });
 
+                        console.log(`[Poll] Found ${logs.length} TopUp events in new blocks`);
+
+                        for (const log of logs) {
+                          console.log(`[Poll] Processing event from block ${log.blockNumber}, tx: ${log.transactionHash}`);
+                          await this.processTopUpEvent(log as EventLog);
+                        }
+
+                        console.log(`[Poll] Successfully updated lastProcessedBlock from ${lastProcessedBlock} to ${currentBlock}`);
+                        lastProcessedBlock = currentBlock;
+                    } else {
+                        console.log(`[Poll] No new blocks to process`);
+                    }
+                    break;
+                } catch (error) {
+                    retries--;
+                    console.error(`[Poll] Error during polling: ${error}`);
+                    if (retries === 0) {
+                        console.error('[Poll] Failed after all retry attempts');
+                    } else {
+                        console.log(`[Poll] Retry attempt ${3 - retries} of 3 after 2 seconds`);
+                        await new Promise(resolve => setTimeout(resolve, 2000));
+                    }
+                }
+            }
+        } finally {
+            console.log("[Poll] Polling round completed");
+            isProcessing = false;
+        }
+    };
+
+    const scheduleNextPoll = () => {
+        setTimeout(async () => {
+            await poll();
+            scheduleNextPoll();
+        }, 30000);
+    };
+
+    scheduleNextPoll();
     console.log('Event polling setup successfully');
   }
 }
