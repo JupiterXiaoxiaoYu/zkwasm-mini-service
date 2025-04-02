@@ -14,28 +14,28 @@ const txSchema = new mongoose.Schema({
     type: BigInt, 
     required: false,
     get: function(value: any) {
-      return BigInt.asUintN(64, value);
+      return value ? BigInt.asUintN(64, value) : null; 
     }
   },
   pid_1: { 
     type: BigInt, 
     required: true,
     get: function(value: any) {
-      return BigInt.asUintN(64, value);
+      return value ? BigInt.asUintN(64, value) : null;
     }
   },
   pid_2: { 
     type: BigInt, 
     required: true,
     get: function(value: any) {
-      return BigInt.asUintN(64, value);
+      return value ? BigInt.asUintN(64, value) : null;
     }
   },
   amount: { 
     type: BigInt, 
     required: true,
     get: function(value: any) {
-      return BigInt.asUintN(64, value);
+      return value ? BigInt.asUintN(64, value) : null;
     }
   },
   retryCount: { type: Number, default: 0 },
@@ -140,7 +140,7 @@ export class Deposit {
 
 
   private async processTopUpEvent(event: EventLog) {
-    let session = null;
+    console.log('======================');
     try {
       const decodedEvent = this.proxyContract.interface.parseLog({
         topics: event.topics,
@@ -175,17 +175,10 @@ export class Deposit {
         return;
       }
 
-      // We now get the pre required information tokenindex, address, pid1/2 amount ready
-      
-
-      // start db session
-      session = await mongoose.startSession();
-      session.startTransaction();
- 
       let amountInEther = amount / BigInt(10 ** 18);
       console.log("Deposited amount (in ether): ", amountInEther);
 
-      let tx = await TxHash.findOne({ txHash: event.transactionHash }).session(session);
+      let tx = await TxHash.findOne({ txHash: event.transactionHash });
       
       if (!tx) {
         console.log(`Transaction hash not found: ${event.transactionHash}`);
@@ -200,10 +193,8 @@ export class Deposit {
             pid_2,
             amount: amountInEther,
           });
-          await tx.save({ session });
+          await tx.save();
           console.log(`Transaction with insufficient amount marked as completed: ${event.transactionHash}`);
-          await session.commitTransaction();
-          session.endSession();
           return;
         }
         
@@ -216,23 +207,17 @@ export class Deposit {
           pid_2,
           amount: amountInEther,
         });
-        await tx.save({ session });
+        await tx.save();
       } else { // tx is tracked
         if (tx.state === 'completed') {
           console.log(`Transaction ${event.transactionHash} already completed.`);
-          await session.commitTransaction();
-          session.endSession();
           return;
         } else if (tx.state === 'pending') {
           try {
             tx.state = 'in-progress';
             const nonce = await this.admin.getNonce();
             tx.nonce = nonce;
-            await tx.save({ session });
-
-            await session.commitTransaction();
-            session.endSession();
-            session = null;
+            await tx.save();
 
             if (amountInEther < 1n) {
               await this.updateTxState(event.transactionHash, 'completed');
@@ -241,10 +226,6 @@ export class Deposit {
             await this.performDeposit(event.transactionHash, tx.nonce, pid_1, pid_2, tokenindex, amountInEther);
           } catch (error) {
             console.error('Error during deposit processing:', error);
-            if (session) {
-              await session.abortTransaction();
-              session.endSession();
-            }
             await this.updateTxState(event.transactionHash, 'failed');
             throw error;
           }
@@ -253,33 +234,26 @@ export class Deposit {
             if (tx.nonce) {
               const checkResult: any = await this.admin.checkDeposit(tx.nonce, pid_1, pid_2, tokenindex, amountInEther);
               if (checkResult.data != null) {
-                await session.commitTransaction();
-                session.endSession();
-                session = null;
-                // TODO: Add assert there to compare the data with amountInEther and pid1/2
+                console.log("checkDeposit success, change state to completed, pid_1:", pid_1, "pid_2:", pid_2, "amount:", amountInEther);
                 await this.updateTxState(event.transactionHash, 'completed');
                 return;
               } else {
+                console.log("checkDeposit failed, perform retry");
                 // perform retry
                 tx.retryCount += 1;
                 tx.lastRetryTime = new Date();
                 const newNonce = await this.admin.getNonce();
                 tx.nonce = newNonce;
-                await tx.save({ session });
-                await session.commitTransaction();
-                session.endSession();
-                session = null;
+                await tx.save();
                 await this.performDeposit(event.transactionHash, tx.nonce, pid_1, pid_2, tokenindex, amountInEther);
               }
             } else {
+              console.log("tx nonce is not set, perform retry");
               tx.retryCount += 1;
               tx.lastRetryTime = new Date();
               const newNonce = await this.admin.getNonce();
               tx.nonce = newNonce;
-              await tx.save({ session });
-              await session.commitTransaction();
-              session.endSession();
-              session = null;
+              await tx.save();
               await this.performDeposit(event.transactionHash, tx.nonce, pid_1, pid_2, tokenindex, amountInEther);
             }
           } catch (error) {
@@ -294,12 +268,9 @@ export class Deposit {
       }
     } catch (error) {
       console.error('Error in processTopUpEvent:', error);
-      if (session) {
-        await session.abortTransaction();
-        session.endSession();
-      }
       throw error;
     }
+    console.log('======================');
   }
 
   private async getHistoricalTopUpEvents() {
@@ -342,8 +313,10 @@ export class Deposit {
           for (const log of logs) {
             console.log(`Processing historical event from tx: ${log.transactionHash}`);
             const tx = await this.findTxByHash(log.transactionHash);
-            if (!tx || ['pending'].includes(tx.state)) {
+            if (!tx || ['pending', 'in-progress', 'failed'].includes(tx.state)) {
               await this.processTopUpEvent(log as EventLog);
+            } else {
+              console.log("tx already processed, skip tx:", log.transactionHash);
             }
           }
         } catch (error) {
