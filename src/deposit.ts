@@ -21,21 +21,21 @@ const txSchema = new mongoose.Schema({
     type: BigInt, 
     required: true,
     get: function(value: any) {
-      return value ? BigInt.asUintN(64, value) : null;
+      return BigInt.asUintN(64, value);
     }
   },
   pid_2: { 
     type: BigInt, 
     required: true,
     get: function(value: any) {
-      return value ? BigInt.asUintN(64, value) : null;
+      return BigInt.asUintN(64, value);
     }
   },
   amount: { 
     type: BigInt, 
     required: true,
     get: function(value: any) {
-      return value ? BigInt.asUintN(64, value) : null;
+      return BigInt.asUintN(64, value);
     }
   },
   retryCount: { type: Number, default: 0 },
