@@ -123,17 +123,17 @@ export class Deposit {
     }
   }
 
-  private async performDeposit(nonce, pid_1, pid_2, tokenIndex, amountInEther) {
+  private async performDeposit(txHash: string, nonce: bigint, pid_1: bigint, pid_2: bigint, tokenIndex: bigint, amountInEther: bigint) {
     try {
-      const depositResult = await this.admin.deposit(nonce, pid_1, pid_2, tokenindex, amountInEther);
+      const depositResult = await this.admin.deposit(nonce, pid_1, pid_2, tokenIndex, amountInEther);
       if (!depositResult) {
-        await this.updateTxState(event.transactionHash, 'failed');
-        throw new Error(`Deposit failed for transaction ${event.transactionHash}`);
+        await this.updateTxState(txHash, 'failed');
+        throw new Error(`Deposit failed for transaction ${txHash}`);
       }
-      await this.updateTxState(event.transactionHash, 'completed');
+      await this.updateTxState(txHash, 'completed');
     } catch (error) {
       console.error('Error during deposit:', error);
-      await this.updateTxState(event.transactionHash, 'failed');
+      await this.updateTxState(txHash, 'failed');
       throw error;
     }
   }
@@ -149,10 +149,6 @@ export class Deposit {
       
       if (!decodedEvent) {
         console.error('Failed to decode event');
-        if (session) {
-          await session.abortTransaction();
-          session.endSession();
-        }
         throw new Error('Failed to decode event');
       }
 
@@ -160,9 +156,9 @@ export class Deposit {
 
       console.log(`TopUp event received: pid_1=${pid_1.toString()}, pid_2=${pid_2.toString()}, amount=${amount.toString()} wei`);
 
-      const getTokenIndex = async function(l1token: string) {
+      const tokens = await this.proxyContract.allTokens();
+      const getTokenIndex = function(l1token: string, tokens: any) {
           let tokenindex: bigint | null = null;
-          const tokens = await this.proxyContract.allTokens();
           for (let i = 0; i < tokens.length; i++) {
             if (l1token === tokens[i].token_uid) {
               tokenindex = BigInt(i);
@@ -172,7 +168,7 @@ export class Deposit {
           return tokenindex;
       }
 
-      const tokenindex = await getTokenIndex(l1token);
+      const tokenindex = await getTokenIndex(l1token, tokens);
       
       if (tokenindex === null) {
         console.log('Skip: token not found in contract:', l1token);
@@ -242,7 +238,7 @@ export class Deposit {
               await this.updateTxState(event.transactionHash, 'completed');
               return;
             }
-            await this.performDeposit(tx.nonce, pid_1, pid_2, tokenindex, amountInEther);
+            await this.performDeposit(event.transactionHash, tx.nonce, pid_1, pid_2, tokenindex, amountInEther);
           } catch (error) {
             console.error('Error during deposit processing:', error);
             if (session) {
@@ -255,12 +251,11 @@ export class Deposit {
         } else if (tx.state === 'in-progress' || tx.state === 'failed') {
           try {
             if (tx.nonce) {
-              await session.commitTransaction();
-              session.endSession();
-              session = null;
-
-              const checkResult = await this.admin.checkDeposit(tx.nonce, pid_1, pid_2, tokenindex, amountInEther);
+              const checkResult: any = await this.admin.checkDeposit(tx.nonce, pid_1, pid_2, tokenindex, amountInEther);
               if (checkResult.data != null) {
+                await session.commitTransaction();
+                session.endSession();
+                session = null;
                 // TODO: Add assert there to compare the data with amountInEther and pid1/2
                 await this.updateTxState(event.transactionHash, 'completed');
                 return;
@@ -274,7 +269,7 @@ export class Deposit {
                 await session.commitTransaction();
                 session.endSession();
                 session = null;
-                await this.performDeposit(tx.nonce, pid_1, pid_2, tokenindex, amountInEther);
+                await this.performDeposit(event.transactionHash, tx.nonce, pid_1, pid_2, tokenindex, amountInEther);
               }
             } else {
               tx.retryCount += 1;
@@ -285,7 +280,7 @@ export class Deposit {
               await session.commitTransaction();
               session.endSession();
               session = null;
-              await this.performDeposit(tx.nonce, pid_1, pid_2, tokenindex, amountInEther);
+              await this.performDeposit(event.transactionHash, tx.nonce, pid_1, pid_2, tokenindex, amountInEther);
             }
           } catch (error) {
             console.error('Error handling in-progress/failed transaction:', error);
