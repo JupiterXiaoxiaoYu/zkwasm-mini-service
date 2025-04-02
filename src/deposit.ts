@@ -54,6 +54,7 @@ export class Deposit {
   private admin: PlayerConvention;
   private provider: ethers.JsonRpcProvider;
   private proxyContract: ethers.Contract;
+  private isProcessingDeposit: boolean = false; 
   private config: {
     rpcProvider: string;
     serverAdminKey: string;
@@ -63,7 +64,6 @@ export class Deposit {
     withdrawOpcode: string;
     depositOpcode: string;
   };
-  private processingTxs: Map<string, boolean> = new Map(); 
 
   constructor(config: {
     rpcProvider: string;
@@ -142,15 +142,13 @@ export class Deposit {
    * @param amountInEther Amount to deposit in ether
    */
   private async performDeposit(txHash: string, nonce: bigint, pid_1: bigint, pid_2: bigint, tokenIndex: bigint, amountInEther: bigint) {
-    // Check if transaction is already being processed
-    if (this.processingTxs.get(txHash)) {
-      console.log(`Transaction ${txHash} is already being processed, skipping`);
-      return;
+    if (this.isProcessingDeposit) {
+      console.error(`Fatal: Detected reentrant call in performDeposit for tx ${txHash}`);
+      process.exit(1); 
     }
 
     try {
-      // Set processing flag to prevent concurrent processing
-      this.processingTxs.set(txHash, true);
+      this.isProcessingDeposit = true;
 
       // Check if transaction is already completed
       const currentTx = await TxHash.findOne({ txHash });
@@ -179,8 +177,7 @@ export class Deposit {
       await this.updateTxState(txHash, 'failed');
       throw error;
     } finally {
-      // Always clean up processing flag
-      this.processingTxs.delete(txHash);
+      this.isProcessingDeposit = false;
     }
   }
 
