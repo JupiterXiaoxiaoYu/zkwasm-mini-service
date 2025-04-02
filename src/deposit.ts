@@ -285,6 +285,7 @@ export class Deposit {
             await this.performDeposit(event.transactionHash, tx.nonce, pid_1, pid_2, tokenindex, amountInEther);
           } catch (error) {
             console.error('Error during deposit processing:', error);
+            await this.updateTxState(event.transactionHash, 'failed'); 
             throw error;
           }
         } else if (tx.state === 'in-progress' || tx.state === 'failed') {
