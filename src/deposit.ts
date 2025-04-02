@@ -123,12 +123,25 @@ export class Deposit {
     }
   }
 
+  private async performDeposit(txHash: string, nonce: bigint, pid_1: bigint, pid_2: bigint, tokenIndex: bigint, amountInEther: bigint) {
+    try {
+      const depositResult = await this.admin.deposit(nonce, pid_1, pid_2, tokenIndex, amountInEther);
+      if (!depositResult) {
+        await this.updateTxState(txHash, 'failed');
+        throw new Error(`Deposit failed for transaction ${txHash}`);
+      }
+      await this.updateTxState(txHash, 'completed');
+    } catch (error) {
+      console.error('Error during deposit:', error);
+      await this.updateTxState(txHash, 'failed');
+      throw error;
+    }
+  }
+
+
   private async processTopUpEvent(event: EventLog) {
     let session = null;
     try {
-      session = await mongoose.startSession();
-      session.startTransaction();
-      
       const decodedEvent = this.proxyContract.interface.parseLog({
         topics: event.topics,
         data: event.data
@@ -136,10 +149,6 @@ export class Deposit {
       
       if (!decodedEvent) {
         console.error('Failed to decode event');
-        if (session) {
-          await session.abortTransaction();
-          session.endSession();
-        }
         throw new Error('Failed to decode event');
       }
 
@@ -147,24 +156,32 @@ export class Deposit {
 
       console.log(`TopUp event received: pid_1=${pid_1.toString()}, pid_2=${pid_2.toString()}, amount=${amount.toString()} wei`);
 
-      let tokenindex: bigint = -1n;
       const tokens = await this.proxyContract.allTokens();
-      for (let i = 0; i < tokens.length; i++) {
-        if (l1token === tokens[i].token_uid) {
-          tokenindex = BigInt(i);
-          break;
-        }
+      const getTokenIndex = function(l1token: string, tokens: any) {
+          let tokenindex: bigint | null = null;
+          for (let i = 0; i < tokens.length; i++) {
+            if (l1token === tokens[i].token_uid) {
+              tokenindex = BigInt(i);
+              break;
+            }
+          }
+          return tokenindex;
       }
+
+      const tokenindex = await getTokenIndex(l1token, tokens);
       
-      if (tokenindex === -1n) {
+      if (tokenindex === null) {
         console.log('Skip: token not found in contract:', l1token);
-        if (session) {
-          await session.abortTransaction();
-          session.endSession();
-        }
         return;
       }
 
+      // We now get the pre required information tokenindex, address, pid1/2 amount ready
+      
+
+      // start db session
+      session = await mongoose.startSession();
+      session.startTransaction();
+ 
       let amountInEther = amount / BigInt(10 ** 18);
       console.log("Deposited amount (in ether): ", amountInEther);
 
@@ -200,93 +217,79 @@ export class Deposit {
           amount: amountInEther,
         });
         await tx.save({ session });
-      } else if (tx.state === 'completed') {
-        console.log(`Transaction ${event.transactionHash} already completed.`);
-        await session.commitTransaction();
-        session.endSession();
-        return;
-      }
-
-      if (tx.state === 'pending') {
-        try {
-          tx.state = 'in-progress';
-          const nonce = await this.admin.getNonce();
-          tx.nonce = nonce;
-          await tx.save({ session });
-          
+      } else { // tx is tracked
+        if (tx.state === 'completed') {
+          console.log(`Transaction ${event.transactionHash} already completed.`);
           await session.commitTransaction();
           session.endSession();
-          session = null;
-          
-          if (amountInEther < 1n) {
-            await this.updateTxState(event.transactionHash, 'completed');
-            return;
-          }
-          
+          return;
+        } else if (tx.state === 'pending') {
           try {
-            const depositResult = await this.admin.deposit(nonce, pid_1, pid_2, tokenindex, amountInEther);
-            if (!depositResult) {
-              await this.updateTxState(event.transactionHash, 'failed');
-              throw new Error(`Deposit failed for transaction ${event.transactionHash}`);
-            }
-            await this.updateTxState(event.transactionHash, 'completed');
-          } catch (error) {
-            console.error('Error during deposit:', error);
-            await this.updateTxState(event.transactionHash, 'failed');
-            throw error;
-          }
-        } catch (error) {
-          console.error('Error during deposit processing:', error);
-          if (session) {
-            await session.abortTransaction();
-            session.endSession();
-          }
-          await this.updateTxState(event.transactionHash, 'failed');
-          throw error;
-        }
-      } else if (tx.state === 'in-progress' || tx.state === 'failed') {
-        try {
-          if (tx.nonce) {
+            tx.state = 'in-progress';
+            const nonce = await this.admin.getNonce();
+            tx.nonce = nonce;
+            await tx.save({ session });
+
             await session.commitTransaction();
             session.endSession();
             session = null;
-            
-            const checkResult = await this.admin.checkDeposit(tx.nonce, pid_1, pid_2, tokenindex, amountInEther);
-            if (checkResult) {
+
+            if (amountInEther < 1n) {
               await this.updateTxState(event.transactionHash, 'completed');
               return;
             }
-          } else {
-            tx.retryCount += 1;
-            tx.lastRetryTime = new Date();
-            const newNonce = await this.admin.getNonce();
-            tx.nonce = newNonce;
-            await tx.save({ session });
-            
-            await session.commitTransaction();
-            session.endSession();
-            session = null;
-            
-            try {
-              const depositResult = await this.admin.deposit(tx.nonce, pid_1, pid_2, tokenindex, amountInEther);
-              if (!depositResult) {
-                await this.updateTxState(event.transactionHash, 'failed');
-                throw new Error(`Retry deposit failed for transaction ${event.transactionHash}`);
-              }
-              await this.updateTxState(event.transactionHash, 'completed');
-            } catch (error) {
-              console.error('Error retrying deposit:', error);
-              await this.updateTxState(event.transactionHash, 'failed');
-              throw error;
+            await this.performDeposit(event.transactionHash, tx.nonce, pid_1, pid_2, tokenindex, amountInEther);
+          } catch (error) {
+            console.error('Error during deposit processing:', error);
+            if (session) {
+              await session.abortTransaction();
+              session.endSession();
             }
+            await this.updateTxState(event.transactionHash, 'failed');
+            throw error;
           }
-        } catch (error) {
-          console.error('Error handling in-progress/failed transaction:', error);
-          if (session) {
-            await session.abortTransaction();
-            session.endSession();
+        } else if (tx.state === 'in-progress' || tx.state === 'failed') {
+          try {
+            if (tx.nonce) {
+              const checkResult: any = await this.admin.checkDeposit(tx.nonce, pid_1, pid_2, tokenindex, amountInEther);
+              if (checkResult.data != null) {
+                await session.commitTransaction();
+                session.endSession();
+                session = null;
+                // TODO: Add assert there to compare the data with amountInEther and pid1/2
+                await this.updateTxState(event.transactionHash, 'completed');
+                return;
+              } else {
+                // perform retry
+                tx.retryCount += 1;
+                tx.lastRetryTime = new Date();
+                const newNonce = await this.admin.getNonce();
+                tx.nonce = newNonce;
+                await tx.save({ session });
+                await session.commitTransaction();
+                session.endSession();
+                session = null;
+                await this.performDeposit(event.transactionHash, tx.nonce, pid_1, pid_2, tokenindex, amountInEther);
+              }
+            } else {
+              tx.retryCount += 1;
+              tx.lastRetryTime = new Date();
+              const newNonce = await this.admin.getNonce();
+              tx.nonce = newNonce;
+              await tx.save({ session });
+              await session.commitTransaction();
+              session.endSession();
+              session = null;
+              await this.performDeposit(event.transactionHash, tx.nonce, pid_1, pid_2, tokenindex, amountInEther);
+            }
+          } catch (error) {
+            console.error('Error handling in-progress/failed transaction:', error);
+            throw error;
           }
-          throw error;
+        } else {
+          // This should never happen
+          console.error("Unexpected state of tracked deposit tx");
+          process.exit(1);
         }
       }
     } catch (error) {
