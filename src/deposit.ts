@@ -326,7 +326,6 @@ export class Deposit {
                 const newNonce = await this.admin.getNonce();
                 tx.nonce = newNonce;
                 await tx.save();
-                console.log("retryDeposit, tx:", JSON.stringify(tx.toObject(), null, 2));
                 await this.performDeposit(event.transactionHash, tx.nonce, pid_1, pid_2, tokenindex, amountInEther);
               }
             } else {
