@@ -2,7 +2,6 @@ import { ZKWasmAppRpc, PlayerConvention } from "zkwasm-minirollup-rpc";
 import { ethers, EventLog } from "ethers";
 import abiData from './utils/Proxy.json' assert { type: 'json' };
 import mongoose from 'mongoose';
-import { hash } from "crypto";
 
 // Mongoose Schema for tracking deposit transactions
 const txSchema = new mongoose.Schema({

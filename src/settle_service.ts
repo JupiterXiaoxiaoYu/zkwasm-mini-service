@@ -19,11 +19,6 @@ export interface Config {
   }
   
   /**
-   * Deposit service class that handles L1 to L2 token deposits
-   */
-  import { Deposit } from './deposit.js';
-  
-  /**
    * Settlement service class that handles L2 to L1 token settlements
    */
   import { Settlement } from './settle.js';
@@ -65,7 +60,6 @@ export interface Config {
     // Use default config from env
     const defaultConfig = getConfig();
     
-    console.log(defaultConfig);
     // Start deposit service
     // const deposit = new Deposit(defaultConfig);
     // await deposit.serve();
