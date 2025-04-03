@@ -2,6 +2,7 @@ import { ZKWasmAppRpc, PlayerConvention } from "zkwasm-minirollup-rpc";
 import { ethers, EventLog } from "ethers";
 import abiData from './utils/Proxy.json' assert { type: 'json' };
 import mongoose from 'mongoose';
+import { hash } from "crypto";
 
 // Mongoose Schema for tracking deposit transactions
 const txSchema = new mongoose.Schema({
@@ -314,7 +315,7 @@ export class Deposit {
             if (tx.nonce != null) {
               const checkResult: any = await this.admin.checkDeposit(tx.nonce, pid_1, pid_2, tokenindex, amountInEther);
               if (checkResult.data != null) {
-                console.log("checkDeposit success, change state to completed, pid_1:", pid_1, "pid_2:", pid_2, "amount:", amountInEther, "data:", JSON.stringify(checkResult.data));
+                console.log("checkDeposit success, change state to completed, pid_1:", pid_1, "pid_2:", pid_2, "amount:", amountInEther, "data:", JSON.stringify(checkResult.data), "hash:", tx.txHash);
                 await this.updateTxState(event.transactionHash, 'completed');
                 console.log("======================\n");
                 return;
