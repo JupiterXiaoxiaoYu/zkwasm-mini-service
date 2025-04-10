@@ -3,17 +3,49 @@ import { ethers, EventLog } from "ethers";
 import abiData from './utils/Proxy.json' assert { type: 'json' };
 import mongoose from 'mongoose';
 
-// Mongoose Schema and Model for saving tx hashes and state
+// Mongoose Schema for tracking deposit transactions
 const txSchema = new mongoose.Schema({
   txHash: { type: String, required: true, unique: true },
+  // Transaction state: pending -> in-progress -> completed/failed
   state: { type: String, enum: ['pending', 'in-progress', 'completed', 'failed'], default: 'pending' },
   timestamp: { type: Date, default: Date.now },
-  l1token: { type: String, required: true },
-  address: { type: String, required: true },
-  pid_1: { type: BigInt, required: true },
-  pid_2: { type: BigInt, required: true },
-  amount: { type: BigInt, required: true },
+  l1token: { type: String, required: true }, // L1 token address
+  address: { type: String, required: true },  // User's address
+  nonce: { 
+    type: BigInt, 
+    required: false,
+    get: function(value: any) {
+      return value ? BigInt.asUintN(64, value) : null; 
+    }
+  },
+  // Player IDs for the deposit
+  pid_1: { 
+    type: BigInt, 
+    required: true,
+    get: function(value: any) {
+      return BigInt.asUintN(64, value);
+    }
+  },
+  pid_2: { 
+    type: BigInt, 
+    required: true,
+    get: function(value: any) {
+      return BigInt.asUintN(64, value);
+    }
+  },
+  amount: { 
+    type: BigInt, 
+    required: true,
+    get: function(value: any) {
+      return BigInt.asUintN(64, value);
+    }
+  },
+  retryCount: { type: Number, default: 0 },     // Number of retry attempts
+  lastRetryTime: { type: Date }                 // Timestamp of last retry
 });
+
+txSchema.set('toJSON', { getters: true });
+txSchema.set('toObject', { getters: true });
 
 const TxHash = mongoose.model('TxHash', txSchema);
 
@@ -22,6 +54,7 @@ export class Deposit {
   private admin: PlayerConvention;
   private provider: ethers.JsonRpcProvider;
   private proxyContract: ethers.Contract;
+  private isProcessingDeposit: boolean = false; 
   private config: {
     rpcProvider: string;
     serverAdminKey: string;
@@ -54,8 +87,6 @@ export class Deposit {
     this.proxyContract = new ethers.Contract(config.settlementContractAddress, abiData.abi, this.provider);
 
     console.log('HTTP provider initialized');
-
-    console.log("player processing key:", this.admin.processingKey);
   }
 
   private createCommand(nonce: bigint, command: bigint, params: Array<bigint>): BigUint64Array {
@@ -88,14 +119,72 @@ export class Deposit {
 
   private async updateTxState(txHash: string, state: string) {
     try {
-      await TxHash.updateOne({ txHash }, { state });
+      await TxHash.updateOne(
+        { 
+          txHash,
+          state: { $ne: 'completed' }
+        }, 
+        { state }
+      );
       console.log(`Transaction state updated to: ${state} for txHash: ${txHash}`);
     } catch (error) {
       console.error(`Failed to update tx state for txHash ${txHash}: ${(error as Error).message}`);
     }
   }
 
+  /**
+   * Performs a deposit transaction with concurrency control
+   * @param txHash Transaction hash
+   * @param nonce Transaction nonce
+   * @param pid_1 First player ID
+   * @param pid_2 Second player ID
+   * @param tokenIndex Token index in the contract
+   * @param amountInEther Amount to deposit in ether
+   */
+  private async performDeposit(txHash: string, nonce: bigint, pid_1: bigint, pid_2: bigint, tokenIndex: bigint, amountInEther: bigint) {
+    if (this.isProcessingDeposit) {
+      console.error(`Fatal: Detected reentrant call in performDeposit for tx ${txHash}`);
+      process.exit(1); 
+    }
+
+    console.log("performDeposit, txHash:", txHash, "nonce:", nonce, "pid_1:", pid_1, "pid_2:", pid_2, "tokenIndex:", tokenIndex, "amountInEther:", amountInEther);
+
+    try {
+      this.isProcessingDeposit = true;
+
+      // Check if transaction is already completed
+      const currentTx = await TxHash.findOne({ txHash });
+      if (currentTx?.state === 'completed') {
+        console.error("tx already completed, this shall not happen");
+        process.exit(1);
+      }
+
+      // Perform the actual deposit
+      const depositResult = await this.admin.deposit(nonce, pid_1, pid_2, tokenIndex, amountInEther);
+      if (!depositResult) {
+        await this.updateTxState(txHash, 'failed');
+        throw new Error(`Deposit failed for transaction ${txHash}`);
+      }
+      
+      // Update state to completed
+      await this.updateTxState(txHash, 'completed');
+      return true;
+    } catch (error) {
+      // Error handling with completion check
+      console.error('Error during deposit:', error);
+      const latestTx = await TxHash.findOne({ txHash });
+      if (latestTx?.state === 'completed') {
+        return true;
+      }
+      await this.updateTxState(txHash, 'failed');
+      throw error;
+    } finally {
+      this.isProcessingDeposit = false;
+    }
+  }
+
   private async processTopUpEvent(event: EventLog) {
+    console.log('======================');
     try {
       const decodedEvent = this.proxyContract.interface.parseLog({
         topics: event.topics,
@@ -104,31 +193,55 @@ export class Deposit {
       
       if (!decodedEvent) {
         console.error('Failed to decode event');
-        return;
+        throw new Error('Failed to decode event');
       }
 
       const [l1token, address, pid_1, pid_2, amount] = decodedEvent.args;
 
-      console.log(`TopUp event received: pid_1=${pid_1.toString()}, pid_2=${pid_2.toString()}, amount=${amount.toString()} wei`);
+      console.log(`TopUp event received: pid_1=${pid_1.toString()}, pid_2=${pid_2.toString()}, amount=${amount/BigInt(10 ** 18)}, hash=${event.transactionHash}`);
 
-      let tokenindex: bigint = -1n;
       const tokens = await this.proxyContract.allTokens();
-      for (let i = 0; i < tokens.length; i++) {
-        if (l1token === tokens[i].token_uid) {
-          tokenindex = BigInt(i);
-          break;
-        }
+      const getTokenIndex = function(l1token: string, tokens: any) {
+          let tokenindex: bigint | null = null;
+          for (let i = 0; i < tokens.length; i++) {
+            if (l1token === tokens[i].token_uid) {
+              tokenindex = BigInt(i);
+              break;
+            }
+          }
+          return tokenindex;
       }
+
+      const tokenindex = await getTokenIndex(l1token, tokens);
       
-      if (tokenindex === -1n) {
+      if (tokenindex === null) {
         console.log('Skip: token not found in contract:', l1token);
         return;
       }
 
-      let tx = await this.findTxByHash(event.transactionHash);
+      let amountInEther = amount / BigInt(10 ** 18);
+
+      let tx = await TxHash.findOne({ txHash: event.transactionHash });
       
       if (!tx) {
         console.log(`Transaction hash not found: ${event.transactionHash}`);
+        
+        if (amountInEther < 1n) {
+          tx = new TxHash({
+            txHash: event.transactionHash,
+            state: 'completed',
+            l1token,
+            address,
+            pid_1,
+            pid_2,
+            amount: amountInEther,
+          });
+          await tx.save();
+          console.log(`Transaction with insufficient amount marked as completed: ${event.transactionHash}`);
+          console.log("======================\n");
+          return;
+        }
+        
         tx = new TxHash({
           txHash: event.transactionHash,
           state: 'pending',
@@ -136,54 +249,103 @@ export class Deposit {
           address,
           pid_1,
           pid_2,
-          amount: amount / BigInt(10 ** 18),
+          amount: amountInEther,
         });
         await tx.save();
-        console.log(`Transaction hash and details saved: ${event.transactionHash}`);
-      } else {
-        console.log(`TxHash ${event.transactionHash} already exists in the DB with state: ${tx.state}`);
-      }
-
-      if (tx && (tx.state === 'pending' || tx.state === 'failed')) {
+        
+        // Add processing logic for the new pending transaction
         try {
-          await this.updateTxState(event.transactionHash, 'in-progress');
-          console.log('Transaction state updated to "in-progress".');
-
-          let amountInEther = amount / BigInt(10 ** 18);
-          console.log("Deposited amount (in ether): ", amountInEther);
-          if (amountInEther < 1n) {
-            console.error(`--------------Skip: Amount must be at least 1 Titan (in ether instead of wei) ${event.transactionHash}\n`);
-          } else {
-            const depositResult = await this.admin.deposit(pid_1, pid_2, tokenindex, amountInEther);
-            if (!depositResult) {
-              throw new Error(`Deposit failed for transaction ${event.transactionHash}`);
-            }
-            console.log("deposit params, pid_1:", pid_1, "pid_2:", pid_2, "tokenIndex:", tokenindex, "amount:", amountInEther);
-            console.log(`------------------Deposit successful! ${event.transactionHash}\n`);
-          }
-          await this.updateTxState(event.transactionHash, 'completed');
+          const nonce = await this.admin.getNonce();
+          tx.nonce = nonce;
+          await tx.save();
         } catch (error) {
-          console.error('Error during deposit:', error);
+          console.error('Error during get nonce:', error);
+          throw error;
+        }
+        
+        try {
+          tx.state = 'in-progress';
+          await tx.save();
+          await this.performDeposit(event.transactionHash, tx.nonce, pid_1, pid_2, tokenindex, amountInEther);
+        } catch (error) {
+          console.error('Error during deposit processing:', error);
           await this.updateTxState(event.transactionHash, 'failed');
-          throw error; // Re-throw the error to ensure it's properly handled
+          throw error;
         }
-      } else if (tx.state === 'in-progress'){
-        while(1) {
-          console.log("in-progress, something wrong happen, should manuel check retry or skip tx");
-          await new Promise(resolve => setTimeout(resolve, 1000));
-        }
-      } else {
-        if (tx.state != 'completed') {
-          while(1) {
-            console.log("shouldn't arrive here");
-            await new Promise(resolve => setTimeout(resolve, 1000));
+
+      } else { // tx is tracked
+        if (tx.state === 'completed') {
+          console.log(`Transaction ${event.transactionHash} already completed.`);
+          console.log("======================\n");
+          return;
+        } else if (tx.state === 'pending') {
+          try {
+            try {
+              const nonce = await this.admin.getNonce();
+              tx.nonce = nonce;
+              await tx.save();
+            } catch (error) {
+              console.error('Error during get nonce:', error);
+              throw error;
+            }
+
+            if (amountInEther < 1n) {
+              console.log("tx with insufficient amount, change state to completed");
+              await this.updateTxState(event.transactionHash, 'completed');
+              console.log("======================\n");
+              return;
+            }
+
+            try {
+              tx.state = 'in-progress';
+              await tx.save();
+              await this.performDeposit(event.transactionHash, tx.nonce, pid_1, pid_2, tokenindex, amountInEther);
+            } catch (error) {
+              console.error('Error during deposit processing:', error);
+              await this.updateTxState(event.transactionHash, 'failed');
+              throw error;
+            }
+
+          } catch (error) {
+            throw error;
           }
+        } else if (tx.state === 'in-progress' || tx.state === 'failed') {
+          try {
+            if (tx.nonce != null) {
+              const checkResult: any = await this.admin.checkDeposit(tx.nonce, pid_1, pid_2, tokenindex, amountInEther);
+              if (checkResult.data != null) {
+                console.log("checkDeposit success, change state to completed, pid_1:", pid_1, "pid_2:", pid_2, "amount:", amountInEther, "data:", JSON.stringify(checkResult.data), "hash:", tx.txHash);
+                await this.updateTxState(event.transactionHash, 'completed');
+                console.log("======================\n");
+                return;
+              } else {
+                console.log("checkDeposit failed, perform retry");
+                // perform retry
+                tx.retryCount += 1;
+                tx.lastRetryTime = new Date();
+                const newNonce = await this.admin.getNonce();
+                tx.nonce = newNonce;
+                await tx.save();
+                await this.performDeposit(event.transactionHash, tx.nonce, pid_1, pid_2, tokenindex, amountInEther);
+              }
+            } else {
+              console.error("tx nonce is not set shall not happen");
+              process.exit(1);
+            }
+          } catch (error) {
+            console.error('Error handling in-progress/failed transaction:', error);
+            throw error;
+          }
+        } else {
+          // This should never happen
+          console.error("Unexpected state of tracked deposit tx");
+          process.exit(1);
         }
       }
     } catch (error) {
-      console.error('Error processing TopUp event:', error);
-      throw error; // Re-throw the error to ensure it's properly handled
+      throw error;
     }
+    console.log('======================\n');
   }
 
   private async getHistoricalTopUpEvents() {
@@ -224,15 +386,25 @@ export class Deposit {
           console.log(`Found ${logs.length} historical TopUp events in this batch.`);
           
           for (const log of logs) {
-            console.log(`Processing historical event from tx: ${log.transactionHash}`);
-            const tx = await this.findTxByHash(log.transactionHash);
-            if (!tx || ['pending', 'failed'].includes(tx.state)) {
-              await this.processTopUpEvent(log as EventLog);
+            try {
+              console.log(`**Processing historical event from tx: ${log.transactionHash}**`);
+              const tx = await this.findTxByHash(log.transactionHash);
+              if (!tx || ['pending', 'in-progress', 'failed'].includes(tx.state)) {
+                await this.processTopUpEvent(log as EventLog);
+              } else {
+                console.log("tx already processed, skip tx:", log.transactionHash);
+              }
+            } catch (error) {
+              console.error(`Error processing individual event ${log.transactionHash}:`, error);
+              // Continue with next event even if current one fails
+              console.log('======================\n');
+              continue;
             }
           }
         } catch (error) {
           console.error(`Error processing batch ${fromBlock}-${toBlock}:`, error);
-          continue; // Continue processing the next batch
+          // Continue with next batch even if current one fails
+          continue;
         }
       }
       
@@ -247,68 +419,95 @@ export class Deposit {
   async serve() {
     const dbName = `${this.config.settlementContractAddress}_deposit`;
     
-    // Connect to MongoDB
     await mongoose.connect(this.config.mongoUri, {
       dbName,
     });
     console.log('Deposit service started - MongoDB connected');
 
-    // Initialize admin
     console.log("Installing admin...");
     await this.createPlayer(this.admin);
 
-    // Process historical events first
     console.log("Processing historical TopUp events...");
     await this.getHistoricalTopUpEvents();
 
     console.log("Setting up polling for new events...");
     let lastProcessedBlock = await this.provider.getBlockNumber();
+    let isProcessing = false; 
     
-    // 每10秒轮询一次新区块
-    setInterval(async () => {
-      let retries = 3;
-      while (retries > 0) {
-        try {
-          const currentBlock = await this.provider.getBlockNumber();
-          if (currentBlock > lastProcessedBlock) {
-            console.log(`Checking new blocks from ${lastProcessedBlock + 1} to ${currentBlock}`);
-            
-            const topUpEvent = abiData.abi.find(
-              (item: any) => item.type === 'event' && item.name === 'TopUp'
-            );
-            if (!topUpEvent) {
-              throw new Error('TopUp event not found in ABI');
-            }
-            const eventHash = ethers.id(`${topUpEvent.name}(${topUpEvent.inputs.map((input: any) => input.type).join(',')})`);
-            
-            const logs = await this.provider.getLogs({
-              address: this.config.settlementContractAddress,
-              topics: [eventHash],
-              fromBlock: lastProcessedBlock + 1,
-              toBlock: currentBlock
-            });
-
-            for (const log of logs) {
-              console.log('New TopUp event detected:', log);
-              await this.processTopUpEvent(log as EventLog);
-            }
-
-            lastProcessedBlock = currentBlock;
-          }
-          break; // 成功后跳出重试循环
-        } catch (error) {
-          retries--;
-          if (retries === 0) {
-            console.error('Error polling for new events after all retries:', error);
-          } else {
-            console.log(`Retry attempt remaining: ${retries}`);
-            await new Promise(resolve => setTimeout(resolve, 2000)); // 等待2秒后重试
-          }
+    const poll = async () => {
+        if (isProcessing) {
+            console.log("[Poll] Previous polling still in progress, skipping this round");
+            console.log("======================\n");
+            return;
         }
-      }
-    }, 30000); // 30秒轮询一次
 
+        console.log("======================");
+        console.log("[Poll] Starting new polling round...");
+        isProcessing = true;
+        try {
+            let retries = 3;
+            while (retries > 0) {
+                try {
+                    const currentBlock = await this.provider.getBlockNumber();
+                    console.log(`[Poll] Current block: ${currentBlock}, Last processed block: ${lastProcessedBlock}`);
+                    
+                    if (currentBlock > lastProcessedBlock) {
+                        console.log(`[Poll] Processing blocks from ${lastProcessedBlock + 1} to ${currentBlock} (${currentBlock - lastProcessedBlock} blocks)`);
+                        
+                        const topUpEvent = abiData.abi.find(
+                          (item: any) => item.type === 'event' && item.name === 'TopUp'
+                        );
+                        if (!topUpEvent) {
+                          throw new Error('TopUp event not found in ABI');
+                        }
+                        const eventHash = ethers.id(`${topUpEvent.name}(${topUpEvent.inputs.map((input: any) => input.type).join(',')})`);
+                        
+                        const logs = await this.provider.getLogs({
+                          address: this.config.settlementContractAddress,
+                          topics: [eventHash],
+                          fromBlock: lastProcessedBlock + 1,
+                          toBlock: currentBlock
+                        });
 
+                        console.log(`[Poll] Found ${logs.length} TopUp events in new blocks`);
+
+                        for (const log of logs) {
+                          console.log(`[Poll] Processing event from block ${log.blockNumber}, tx: ${log.transactionHash}`);
+                          await this.processTopUpEvent(log as EventLog);
+                        }
+
+                        console.log(`[Poll] Successfully updated lastProcessedBlock from ${lastProcessedBlock} to ${currentBlock}`);
+                        lastProcessedBlock = currentBlock;
+                    } else {
+                        console.log(`[Poll] No new blocks to process`);
+                    }
+                    break;
+                } catch (error) {
+                    retries--;
+                    console.error(`[Poll] Error during polling: ${error}`);
+                    if (retries === 0) {
+                        console.error('[Poll] Failed after all retry attempts');
+                    } else {
+                        console.log(`[Poll] Retry attempt ${3 - retries} of 3 after 2 seconds`);
+                        await new Promise(resolve => setTimeout(resolve, 2000));
+                    }
+                }
+            }
+        } finally {
+            console.log("[Poll] Polling round completed");
+            console.log("======================\n");
+            isProcessing = false;
+        }
+    };
+
+    const scheduleNextPoll = () => {
+        setTimeout(async () => {
+            await poll();
+            scheduleNextPoll();
+        }, 30000);
+    };
+
+    scheduleNextPoll();
     console.log('Event polling setup successfully');
   }
 }

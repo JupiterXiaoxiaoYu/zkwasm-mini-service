@@ -72,8 +72,7 @@ const getConfig = (configOverride?: Partial<Config>): Config => {
 const main = async () => {
   // Use default config from env
   const defaultConfig = getConfig();
-  
-  console.log(defaultConfig);
+
   // Start deposit service
   const deposit = new Deposit(defaultConfig);
   await deposit.serve();
