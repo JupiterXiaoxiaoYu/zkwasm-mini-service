@@ -20,6 +20,8 @@ export interface Config {
   withdrawOpcode: string;
   /** Deposit opcode */
   depositOpcode: string;
+  /** Optional start block for historical event processing */
+  startBlock?: number;
 }
 
 
@@ -57,6 +59,7 @@ const getConfig = (configOverride?: Partial<Config>): Config => {
     chainId: Number(get_chain_id()),
     withdrawOpcode: "6",
     depositOpcode: "7",
+    startBlock: process.env.START_BLOCK ? Number(process.env.START_BLOCK) : undefined,
   };  
 
 

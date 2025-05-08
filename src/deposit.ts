@@ -63,6 +63,7 @@ export class Deposit {
     zkwasmRpcUrl?: string;
     withdrawOpcode: string;
     depositOpcode: string;
+    startBlock?: number;
   };
 
   constructor(config: {
@@ -73,6 +74,7 @@ export class Deposit {
     zkwasmRpcUrl?: string;
     withdrawOpcode: string;
     depositOpcode: string;
+    startBlock?: number;
   }) {
     this.config = config;
     this.rpc = new ZKWasmAppRpc(config.zkwasmRpcUrl || "http://localhost:3000");
@@ -354,7 +356,18 @@ export class Deposit {
       const latestBlock = await this.provider.getBlockNumber();
       const batchSize = 50000;
       const totalBlocksToScan = 200000;
-      const startBlock = Math.max(0, latestBlock - totalBlocksToScan);
+      
+      // Use configured startBlock if available, otherwise calculate from totalBlocksToScan
+      let startBlock: number;
+      if (this.config.startBlock !== undefined) {
+        if (this.config.startBlock > latestBlock) {
+          console.log(`Configured startBlock (${this.config.startBlock}) is greater than latest block (${latestBlock}), skipping historical processing`);
+          return;
+        }
+        startBlock = this.config.startBlock;
+      } else {
+        startBlock = Math.max(0, latestBlock - totalBlocksToScan);
+      }
       
       console.log(`Starting historical scan - Latest block: ${latestBlock}`);
       console.log(`Scanning from block ${startBlock} to ${latestBlock}`);

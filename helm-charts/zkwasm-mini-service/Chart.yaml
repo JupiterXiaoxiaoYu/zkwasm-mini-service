@@ -1,6 +1,0 @@
-apiVersion: v2
-name: zkwasm-mini-service
-description: A Helm chart for zkWasm Mini Service for handling L1 to L2 token deposits and settlements
-type: application
-version: 0.1.0
-appVersion: "1.0.0"
