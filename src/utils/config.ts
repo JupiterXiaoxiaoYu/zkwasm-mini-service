@@ -100,6 +100,22 @@ export const get_settle_private_account = () => {
   }
 }
 
+export const get_withdraw_opcode = () => {
+  if (process.env.WITHDRAW_OPCODE) {
+    return process.env.WITHDRAW_OPCODE;
+  } else {
+    return "6";
+  }
+}
+
+export const get_deposit_opcode = () => {
+  if (process.env.DEPOSIT_OPCODE) {
+    return process.env.DEPOSIT_OPCODE;
+  } else {
+    return "7";
+  }
+}
+
 export const txSchema = new mongoose.Schema(
     {
       msg: {

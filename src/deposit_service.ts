@@ -43,6 +43,8 @@ import {
   get_contract_addr,
   get_settle_private_account,
   get_zkwasm_rpc_url,
+  get_withdraw_opcode,
+  get_deposit_opcode,
 } from './utils/config.js';
 
 dotenv.config();
@@ -57,8 +59,8 @@ const getConfig = (configOverride?: Partial<Config>): Config => {
     zkwasmRpcUrl: get_zkwasm_rpc_url(),
     settlerPrivateKey: get_settle_private_account(),
     chainId: Number(get_chain_id()),
-    withdrawOpcode: "6",
-    depositOpcode: "7",
+    withdrawOpcode: get_withdraw_opcode(),
+    depositOpcode: get_deposit_opcode(),
     startBlock: process.env.START_BLOCK ? Number(process.env.START_BLOCK) : undefined,
   };  
 
