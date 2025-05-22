@@ -258,6 +258,10 @@ export class Deposit {
         // Add processing logic for the new pending transaction
         try {
           const nonce = await this.admin.getNonce();
+          if(nonce === null) {
+            console.error("nonce is null, this shall not happen");
+            process.exit(1);
+          }
           tx.nonce = nonce;
           await tx.save();
         } catch (error) {
@@ -284,7 +288,12 @@ export class Deposit {
           try {
             try {
               const nonce = await this.admin.getNonce();
+              if(nonce === null) {
+                console.error("nonce is null, this shall not happen");
+                process.exit(1);
+              }
               tx.nonce = nonce;
+
               await tx.save();
             } catch (error) {
               console.error('Error during get nonce:', error);
@@ -326,6 +335,10 @@ export class Deposit {
                 tx.retryCount += 1;
                 tx.lastRetryTime = new Date();
                 const newNonce = await this.admin.getNonce();
+                if(newNonce === null) {
+                  console.error("nonce is null, this shall not happen");
+                  process.exit(1);
+                }
                 tx.nonce = newNonce;
                 await tx.save();
                 await this.performDeposit(event.transactionHash, tx.nonce, pid_1, pid_2, tokenindex, amountInEther);
@@ -354,7 +367,7 @@ export class Deposit {
     try {
       console.log("get block number...");
       const latestBlock = await this.provider.getBlockNumber();
-      const batchSize = 50000;
+      const batchSize = 10000;
       const totalBlocksToScan = 200000;
       
       // Use configured startBlock if available, otherwise calculate from totalBlocksToScan
@@ -475,16 +488,27 @@ export class Deposit {
                         }
                         const eventHash = ethers.id(`${topUpEvent.name}(${topUpEvent.inputs.map((input: any) => input.type).join(',')})`);
                         
-                        const logs = await this.provider.getLogs({
-                          address: this.config.settlementContractAddress,
-                          topics: [eventHash],
-                          fromBlock: lastProcessedBlock + 1,
-                          toBlock: currentBlock
-                        });
+                        // Process in smaller batches to avoid exceeding provider limits
+                        const maxBatchSize = 10000;
+                        let processedLogs: EventLog[] = [];
+                        
+                        for (let fromBlock = lastProcessedBlock + 1; fromBlock <= currentBlock; fromBlock += maxBatchSize) {
+                            const toBlock = Math.min(fromBlock + maxBatchSize - 1, currentBlock);
+                            console.log(`[Poll] Querying batch from block ${fromBlock} to ${toBlock}`);
+                            
+                            const batchLogs = await this.provider.getLogs({
+                                address: this.config.settlementContractAddress,
+                                topics: [eventHash],
+                                fromBlock,
+                                toBlock
+                            });
+                            
+                            processedLogs = [...processedLogs, ...batchLogs as EventLog[]];
+                        }
 
-                        console.log(`[Poll] Found ${logs.length} TopUp events in new blocks`);
+                        console.log(`[Poll] Found ${processedLogs.length} TopUp events in new blocks`);
 
-                        for (const log of logs) {
+                        for (const log of processedLogs) {
                           console.log(`[Poll] Processing event from block ${log.blockNumber}, tx: ${log.transactionHash}`);
                           await this.processTopUpEvent(log as EventLog);
                         }
