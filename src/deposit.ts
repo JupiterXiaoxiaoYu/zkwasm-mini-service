@@ -13,9 +13,9 @@ const txSchema = new mongoose.Schema({
   address: { type: String, required: true },  // User's address
   nonce: { 
     type: BigInt, 
-    required: false,
+    required: true,
     get: function(value: any) {
-      return value ? BigInt.asUintN(64, value) : null; 
+      return BigInt.asUintN(64, value); 
     }
   },
   // Player IDs for the deposit
@@ -257,7 +257,7 @@ export class Deposit {
         
         // Add processing logic for the new pending transaction
         try {
-          const nonce = await this.admin.getNonce();
+          const nonce: bigint = await this.admin.getNonce();
           if(nonce === null) {
             console.error("nonce is null, this shall not happen");
             process.exit(1);
@@ -287,7 +287,7 @@ export class Deposit {
         } else if (tx.state === 'pending') {
           try {
             try {
-              const nonce = await this.admin.getNonce();
+              const nonce: bigint = await this.admin.getNonce();
               if(nonce === null) {
                 console.error("nonce is null, this shall not happen");
                 process.exit(1);
@@ -334,7 +334,7 @@ export class Deposit {
                 // perform retry
                 tx.retryCount += 1;
                 tx.lastRetryTime = new Date();
-                const newNonce = await this.admin.getNonce();
+                const newNonce: bigint = await this.admin.getNonce();
                 if(newNonce === null) {
                   console.error("nonce is null, this shall not happen");
                   process.exit(1);
@@ -367,7 +367,7 @@ export class Deposit {
     try {
       console.log("get block number...");
       const latestBlock = await this.provider.getBlockNumber();
-      const batchSize = 10000;
+      const batchSize = 25000;
       const totalBlocksToScan = 200000;
       
       // Use configured startBlock if available, otherwise calculate from totalBlocksToScan
@@ -489,7 +489,7 @@ export class Deposit {
                         const eventHash = ethers.id(`${topUpEvent.name}(${topUpEvent.inputs.map((input: any) => input.type).join(',')})`);
                         
                         // Process in smaller batches to avoid exceeding provider limits
-                        const maxBatchSize = 10000;
+                        const maxBatchSize = 25000;
                         let processedLogs: EventLog[] = [];
                         
                         for (let fromBlock = lastProcessedBlock + 1; fromBlock <= currentBlock; fromBlock += maxBatchSize) {
