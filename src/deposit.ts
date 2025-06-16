@@ -13,7 +13,7 @@ const txSchema = new mongoose.Schema({
   address: { type: String, required: true },  // User's address
   nonce: { 
     type: BigInt, 
-    required: true,
+    required: false,
     get: function(value: any) {
       return BigInt.asUintN(64, value); 
     }
