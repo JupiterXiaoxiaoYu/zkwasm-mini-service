@@ -1,7 +1,7 @@
-import { ZKWasmAppRpc, PlayerConvention } from "zkwasm-minirollup-rpc";
 import { ethers, EventLog } from "ethers";
-import abiData from './utils/Proxy.json' assert { type: 'json' };
 import mongoose from 'mongoose';
+import { PlayerConvention, ZKWasmAppRpc } from "zkwasm-minirollup-rpc";
+import abiData from './utils/Proxy.json' assert { type: 'json' };
 
 // Mongoose Schema for tracking deposit transactions
 const txSchema = new mongoose.Schema({
@@ -84,6 +84,8 @@ export class Deposit {
     // Convert string to BigInt
     const WITHDRAW = BigInt(config.withdrawOpcode);
     const DEPOSIT = BigInt(config.depositOpcode);
+
+    console.log("OPCODES - WITHDRAW:", WITHDRAW, "DEPOSIT:", DEPOSIT);
     
     this.admin = new PlayerConvention(config.serverAdminKey, this.rpc, DEPOSIT, WITHDRAW);
     this.proxyContract = new ethers.Contract(config.settlementContractAddress, abiData.abi, this.provider);
@@ -262,6 +264,7 @@ export class Deposit {
             console.error("nonce is null, this shall not happen");
             process.exit(1);
           }
+          console.log("using nonce:", nonce);
           tx.nonce = nonce;
           await tx.save();
         } catch (error) {
