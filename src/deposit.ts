@@ -370,7 +370,7 @@ export class Deposit {
     try {
       console.log("get block number...");
       const latestBlock = await this.provider.getBlockNumber();
-      const batchSize = 25000;
+      const batchSize = 10000;
       const totalBlocksToScan = 200000;
       
       // Use configured startBlock if available, otherwise calculate from totalBlocksToScan
