@@ -492,7 +492,7 @@ export class Deposit {
                         const eventHash = ethers.id(`${topUpEvent.name}(${topUpEvent.inputs.map((input: any) => input.type).join(',')})`);
                         
                         // Process in smaller batches to avoid exceeding provider limits
-                        const maxBatchSize = 25000;
+                        const maxBatchSize = 10000;
                         let processedLogs: EventLog[] = [];
                         
                         for (let fromBlock = lastProcessedBlock + 1; fromBlock <= currentBlock; fromBlock += maxBatchSize) {
