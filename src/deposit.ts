@@ -528,8 +528,21 @@ export class Deposit {
                     if (retries === 0) {
                         console.error('[Poll] Failed after all retry attempts');
                     } else {
-                        console.log(`[Poll] Retry attempt ${3 - retries} of 3 after 2 seconds`);
-                        await new Promise(resolve => setTimeout(resolve, 2000));
+                        let errMsg = '';
+                        if (typeof error === 'string') {
+                            errMsg = error;
+                        } else if (error && typeof error === 'object' && 'message' in error && typeof (error as any).message === 'string') {
+                            errMsg = (error as any).message;
+                        } else {
+                            errMsg = String(error);
+                        }
+                        if (errMsg.includes('503')) {
+                            console.log('[Poll] 503 error, waiting 60 seconds before retry...');
+                            await new Promise(resolve => setTimeout(resolve, 60000));
+                        } else {
+                            console.log(`[Poll] Retry attempt ${3 - retries} of 3 after 5 seconds`);
+                            await new Promise(resolve => setTimeout(resolve, 5000));
+                        }
                     }
                 }
             }
