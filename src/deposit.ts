@@ -445,6 +445,68 @@ export class Deposit {
     }
   }
 
+  /**
+   * Performs retrospective scanning to check for missed transactions
+   * @param currentBlock Current block number to scan backwards from
+   */
+  private async performRetrospectiveScan(currentBlock: number) {
+    try {
+      console.log("[Retrospective] Starting retrospective scan to check for missed transactions...");
+      const scanDepth = 1000; // Scan back 1000 blocks
+      
+      const startBlock = Math.max(0, currentBlock - scanDepth);
+      console.log(`[Retrospective] Scanning from block ${startBlock} to ${currentBlock}`);
+      
+      // Get event signature
+      const topUpEvent = abiData.abi.find(
+        (item: any) => item.type === 'event' && item.name === 'TopUp'
+      );
+      if (!topUpEvent) {
+        throw new Error('TopUp event not found in ABI');
+      }
+      const eventSignature = `${topUpEvent.name}(${topUpEvent.inputs.map((input: any) => input.type).join(',')})`;
+      const eventHash = ethers.id(eventSignature);
+
+      let totalEventsFound = 0;
+      let missedEventsProcessed = 0;
+
+      // Query all blocks at once
+      try {
+        const logs = await this.provider.getLogs({
+          address: this.config.settlementContractAddress,
+          topics: [eventHash],
+          fromBlock: startBlock,
+          toBlock: currentBlock
+        });
+
+        totalEventsFound = logs.length;
+        
+        for (const log of logs) {
+          try {
+            const tx = await this.findTxByHash(log.transactionHash);
+            if (!tx || ['pending', 'in-progress', 'failed'].includes(tx.state)) {
+              console.log(`[Retrospective] Found missed transaction: ${log.transactionHash} in block ${log.blockNumber}`);
+              await this.processTopUpEvent(log as EventLog);
+              missedEventsProcessed++;
+            }
+            // Don't log for already processed transactions to avoid spam
+          } catch (error) {
+            console.error(`[Retrospective] Error processing event ${log.transactionHash}:`, error);
+            // Continue with next event even if current one fails
+            continue;
+          }
+        }
+      } catch (error) {
+        console.error(`[Retrospective] Error querying blocks ${startBlock}-${currentBlock}:`, error);
+        throw error;
+      }
+      
+      console.log(`[Retrospective] Scan completed. Total events found: ${totalEventsFound}, Missed events processed: ${missedEventsProcessed}`);
+    } catch (error) {
+      console.error('[Retrospective] Error during retrospective scan:', error);
+    }
+  }
+
   async serve() {
     const dbName = `${this.config.settlementContractAddress}_deposit`;
     
@@ -462,6 +524,7 @@ export class Deposit {
     console.log("Setting up polling for new events...");
     let lastProcessedBlock = await this.provider.getBlockNumber();
     let isProcessing = false; 
+    let blockCounter = 0; // Counter for retrospective scanning
     
     const poll = async () => {
         if (isProcessing) {
@@ -481,7 +544,8 @@ export class Deposit {
                     console.log(`[Poll] Current block: ${currentBlock}, Last processed block: ${lastProcessedBlock}`);
                     
                     if (currentBlock > lastProcessedBlock) {
-                        console.log(`[Poll] Processing blocks from ${lastProcessedBlock + 1} to ${currentBlock} (${currentBlock - lastProcessedBlock} blocks)`);
+                        const blocksToProcess = currentBlock - lastProcessedBlock;
+                        console.log(`[Poll] Processing blocks from ${lastProcessedBlock + 1} to ${currentBlock} (${blocksToProcess} blocks)`);
                         
                         const topUpEvent = abiData.abi.find(
                           (item: any) => item.type === 'event' && item.name === 'TopUp'
@@ -518,6 +582,17 @@ export class Deposit {
 
                         console.log(`[Poll] Successfully updated lastProcessedBlock from ${lastProcessedBlock} to ${currentBlock}`);
                         lastProcessedBlock = currentBlock;
+                        blockCounter += blocksToProcess;
+
+                        // Check if we need to perform retrospective scanning
+                        if (blockCounter >= 1000) {
+                            console.log(`[Poll] Block counter reached ${blockCounter}, scheduling retrospective scan...`);
+                            // Run retrospective scan asynchronously to not block polling
+                            this.performRetrospectiveScan(lastProcessedBlock).catch(error => {
+                                console.error('[Poll] Error in async retrospective scan:', error);
+                            });
+                            blockCounter = 0; // Reset counter
+                        }
                     } else {
                         console.log(`[Poll] No new blocks to process`);
                     }
