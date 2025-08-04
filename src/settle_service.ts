@@ -1,11 +1,9 @@
 /**
- * Configuration interface for both Deposit and Settlement services
+ * Configuration interface for Settlement service
  */
 export interface Config {
     /** RPC provider URL for Ethereum network */
     rpcProvider: string;
-    /** Admin key for the server */
-    serverAdminKey: string;
     /** Settlement contract address */
     settlementContractAddress: string;
     /** MongoDB URI */
@@ -25,7 +23,6 @@ export interface Config {
   
   import dotenv from 'dotenv';
   import { 
-    get_server_admin_key,
     get_chain_id,
     get_mongoose_db,
     get_contract_addr,
@@ -39,7 +36,6 @@ export interface Config {
     // Default config from environment variables
     const defaultConfig: Config = {
       rpcProvider: process.env.RPC_PROVIDER || "https://ethereum-sepolia-rpc.publicnode.com",
-      serverAdminKey: get_server_admin_key(),
       settlementContractAddress: get_contract_addr(),
       mongoUri: get_mongoose_db(),
       zkwasmRpcUrl: get_zkwasm_rpc_url(),

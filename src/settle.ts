@@ -12,7 +12,6 @@ export class Settlement {
   private signer: ethers.Wallet;
   private config: {
     rpcProvider: string;
-    serverAdminKey: string;
     settlementContractAddress: string;
     mongoUri: string;
     settlerPrivateKey: string;
@@ -24,7 +23,6 @@ export class Settlement {
 
   constructor(config: {
     rpcProvider: string;
-    serverAdminKey: string;
     settlementContractAddress: string;
     mongoUri: string;
     settlerPrivateKey: string;
