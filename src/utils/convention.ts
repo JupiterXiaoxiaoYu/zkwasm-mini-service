@@ -35,14 +35,25 @@ export class TransactionData {
 
 }
 
-export function decodeWithdraw(txdata: Uint8Array) {
+export function decodeWithdraw(txdata: Uint8Array, tokenPrecision: number = 0) {
   let r = [];
   if (txdata.length > 1) {
     for (let i = 0; i < txdata.length; i += 32) {
       let extra = txdata.slice(i, i+4);
       let address = txdata.slice(i+4, i+24);
       let amount = txdata.slice(i+24, i+32);
-      let amountInWei = ethers.parseEther(bytesToDecimal(Array.from(amount)));
+      
+      // Amount conversion: zkWASM (configurable precision) → L1 (18 decimals)
+      // Formula: L1_wei = (zkwasm_amount / 10^tokenPrecision) * 10^18
+      // 
+      // Examples:
+      // - tokenPrecision=0: zkWASM=1 → 1 * 10^18 wei
+      // - tokenPrecision=6: zkWASM=1000000 → (1000000/10^6) * 10^18 = 1 * 10^18 wei
+      const zkwasmAmount = BigInt(bytesToDecimal(Array.from(amount)));
+      const precisionDivisor = BigInt(10 ** tokenPrecision);
+      const amountInBaseUnit = zkwasmAmount / precisionDivisor;
+      const amountInWei = amountInBaseUnit * BigInt(10 ** 18);
+      
       r.push({
         op: extra[0],
         index: extra[1],

@@ -14,6 +14,11 @@ export interface Config {
     settlerPrivateKey?: string;
     /** Chain ID */
     chainId?: number;
+    /** Token precision (decimal places) for internal zkWASM representation
+     * Default: 0 (integer, backward compatible)
+     * Set to 6 for micro-unit precision (1 token = 1,000,000 base units)
+     */
+    tokenPrecision?: number;
   }
   
   /**
@@ -41,6 +46,7 @@ export interface Config {
       zkwasmRpcUrl: get_zkwasm_rpc_url(),
       settlerPrivateKey: get_settle_private_account(),
       chainId: Number(get_chain_id()),
+      tokenPrecision: process.env.TOKEN_PRECISION ? Number(process.env.TOKEN_PRECISION) : 0,
     };  
   
   

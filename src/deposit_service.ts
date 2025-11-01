@@ -22,6 +22,12 @@ export interface Config {
   depositOpcode: string;
   /** Optional start block for historical event processing */
   startBlock?: number;
+  /** Token precision (decimal places) for internal zkWASM representation
+   * Default: 0 (integer, backward compatible)
+   * Set to 6 for micro-unit precision (1 token = 1,000,000 base units)
+   * Example: tokenPrecision=6 means 1 USDC = 1000000 in zkWASM
+   */
+  tokenPrecision?: number;
 }
 
 
@@ -62,6 +68,7 @@ const getConfig = (configOverride?: Partial<Config>): Config => {
     withdrawOpcode: get_withdraw_opcode(),
     depositOpcode: get_deposit_opcode(),
     startBlock: process.env.START_BLOCK ? Number(process.env.START_BLOCK) : undefined,
+    tokenPrecision: process.env.TOKEN_PRECISION ? Number(process.env.TOKEN_PRECISION) : 0,
   };  
 
 

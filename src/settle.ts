@@ -10,11 +10,13 @@ import { decodeWithdraw} from "./utils/convention.js";
 export class Settlement {
   private provider: ethers.JsonRpcProvider;
   private signer: ethers.Wallet;
+  private tokenPrecision: number;
   private config: {
     rpcProvider: string;
     settlementContractAddress: string;
     mongoUri: string;
     settlerPrivateKey: string;
+    tokenPrecision?: number;
   };
   private constants: {
     proxyAddress: string;
@@ -26,14 +28,17 @@ export class Settlement {
     settlementContractAddress: string;
     mongoUri: string;
     settlerPrivateKey: string;
+    tokenPrecision?: number;
   }) {
     this.config = config;
     this.provider = new ethers.JsonRpcProvider(config.rpcProvider);
     this.signer = new ethers.Wallet(config.settlerPrivateKey, this.provider);
+    this.tokenPrecision = config.tokenPrecision ?? 0;
     this.constants = {
       proxyAddress: config.settlementContractAddress,
       chainId: Number(get_chain_id()),
     };
+    console.log(`Settlement service initialized with token precision: ${this.tokenPrecision} decimals`);
   }
 
   private convertToBigUint64Array(combinedRoot: bigint): BigUint64Array {
@@ -294,7 +299,7 @@ export class Settlement {
             throw new Error('Transaction receipt is null, cannot process withdraw events');
           }
 
-          const r = decodeWithdraw(attributes.txData);
+          const r = decodeWithdraw(attributes.txData, this.tokenPrecision);
           
           const s = await this.getWithdrawEventParameters(proxy, receipt);
           let status = 'Done';

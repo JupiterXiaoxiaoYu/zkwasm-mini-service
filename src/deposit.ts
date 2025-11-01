@@ -54,7 +54,8 @@ export class Deposit {
   private admin: PlayerConvention;
   private provider: ethers.JsonRpcProvider;
   private proxyContract: ethers.Contract;
-  private isProcessingDeposit: boolean = false; 
+  private isProcessingDeposit: boolean = false;
+  private tokenPrecisionMultiplier: bigint;
   private config: {
     rpcProvider: string;
     serverAdminKey: string;
@@ -64,6 +65,7 @@ export class Deposit {
     withdrawOpcode: string;
     depositOpcode: string;
     startBlock?: number;
+    tokenPrecision?: number;
   };
 
   constructor(config: {
@@ -75,6 +77,7 @@ export class Deposit {
     withdrawOpcode: string;
     depositOpcode: string;
     startBlock?: number;
+    tokenPrecision?: number;
   }) {
     this.config = config;
     this.rpc = new ZKWasmAppRpc(config.zkwasmRpcUrl || "http://localhost:3000");
@@ -86,6 +89,11 @@ export class Deposit {
     const DEPOSIT = BigInt(config.depositOpcode);
 
     console.log("OPCODES - WITHDRAW:", WITHDRAW, "DEPOSIT:", DEPOSIT);
+    
+    // Calculate precision multiplier: tokenPrecision=0 → 1, tokenPrecision=6 → 1000000
+    const precision = config.tokenPrecision ?? 0;
+    this.tokenPrecisionMultiplier = BigInt(10 ** precision);
+    console.log(`Token precision: ${precision} decimals (multiplier: ${this.tokenPrecisionMultiplier})`);
     
     this.admin = new PlayerConvention(config.serverAdminKey, this.rpc, DEPOSIT, WITHDRAW);
     this.proxyContract = new ethers.Contract(config.settlementContractAddress, abiData.abi, this.provider);
@@ -223,7 +231,16 @@ export class Deposit {
         return;
       }
 
-      let amountInEther = amount / BigInt(10 ** 18);
+      // Amount conversion: L1 (18 decimals) → zkWASM (configurable precision)
+      // Formula: zkwasmAmount = (L1_amount / 10^18) * 10^tokenPrecision
+      // 
+      // Examples:
+      // - tokenPrecision=0 (integer): 1 ETH (10^18 wei) → 1
+      // - tokenPrecision=6 (6 decimals): 1 ETH (10^18 wei) → 1,000,000
+      const amountInBaseUnit = amount / BigInt(10 ** 18);
+      let amountInEther = amountInBaseUnit * this.tokenPrecisionMultiplier;
+      
+      console.log(`Amount conversion: L1=${amount} → baseUnit=${amountInBaseUnit} → zkWASM=${amountInEther} (precision=${this.config.tokenPrecision ?? 0})`);
 
       let tx = await TxHash.findOne({ txHash: event.transactionHash });
       
