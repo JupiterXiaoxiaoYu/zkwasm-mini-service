@@ -387,7 +387,7 @@ export class Deposit {
     try {
       console.log("get block number...");
       const latestBlock = await this.provider.getBlockNumber();
-      const batchSize = 10000;
+      const batchSize = 5000;
       const totalBlocksToScan = 200000;
       
       // Use configured startBlock if available, otherwise calculate from totalBlocksToScan
@@ -573,7 +573,7 @@ export class Deposit {
                         const eventHash = ethers.id(`${topUpEvent.name}(${topUpEvent.inputs.map((input: any) => input.type).join(',')})`);
                         
                         // Process in smaller batches to avoid exceeding provider limits
-                        const maxBatchSize = 10000;
+                        const maxBatchSize = 5000;
                         let processedLogs: EventLog[] = [];
                         
                         for (let fromBlock = lastProcessedBlock + 1; fromBlock <= currentBlock; fromBlock += maxBatchSize) {
